@@ -10,6 +10,13 @@ class Peer:
         self.host_formated = ''
         self.host = ''
         # todo: validate host_str and populate properties
+        try:
+            ipaddress.ip_address(host_str)
+            self.host = host_str
+            self.host_formated = host_str
+        except ValueError:
+            self.host = ipaddress.ip_address(host_str).exploded
+            self.host_formated = host_str
 
     def __str__(self) -> str:
         return f"{self.host_formated}:{self.port}"
