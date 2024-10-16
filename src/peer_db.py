@@ -18,6 +18,7 @@ def load_peers() -> Set[Peer]:
     try:
         with open(PEER_DB_FILE, 'r') as f:
             peers = set()
+            next(f)  # Skip the header line
             for line in f:
                 host, port = line.strip().split(',')
                 peers.add(Peer(host, int(port)))
