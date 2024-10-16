@@ -75,22 +75,46 @@ def mk_getmempool_msg():
 
 # parses a message as json. returns decoded message
 def parse_msg(msg_str):
-    pass # TODO
+    return json.loads(msg_str)
 
 # Send data over the network as a message
 async def write_msg(writer, msg_dict):
-    pass # TODO
+    msg = json.dumps(msg_dict, default=canonicalize)
+    writer.write(msg.encode())
+    await writer.drain()
 
 # Check if message contains no invalid keys,
 # raises a MalformedMsgException
 def validate_allowed_keys(msg_dict, allowed_keys, msg_type):
-    pass # TODO
+    for key in msg_dict.keys():
+        if key not in allowed_keys:
+            raise MalformedMsgException(f"Invalid key {key} in {msg_type} message")
 
 
 # Validate the hello message
 # raises an exception
 def validate_hello_msg(msg_dict):
-    pass # TODO
+    keys = {'type', 'version', 'agent'}
+
+    # Check for invalid keys
+    validate_allowed_keys(msg_dict, keys, 'hello')
+
+    # Check for missing required keys
+    for key in keys:
+        if key not in msg_dict:
+            raise MalformedMsgException(f"Missing required key {key} in hello message")
+
+    # Validate version format (example: "1.10.x")
+    version_pattern = re.compile(r'^0\.10\.\d$')
+    if not version_pattern.match(msg_dict['version']):
+        raise MalformedMsgException(f"Invalid version format: {msg_dict['version']}")
+
+    # Validate agent key
+    agent = msg_dict['agent']
+    if len(agent) > 128:
+        raise MalformedMsgException("Agent key is longer than 128 characters")
+    if not all(c.isprintable() for c in agent):
+        raise MalformedMsgException("Agent key contains non-printable characters")
 
 # returns true iff host_str is a valid hostname
 def validate_hostname(host_str):
@@ -110,39 +134,69 @@ def validate_peers_msg(msg_dict):
 
 # raise an exception if not valid
 def validate_getpeers_msg(msg_dict):
-    pass # TODO
+    validate_allowed_keys(msg_dict, {'type'}, 'getpeers')
 
 # raise an exception if not valid
 def validate_getchaintip_msg(msg_dict):
-    pass # TODO
+    validate_allowed_keys(msg_dict, {'type'}, 'getchaintip')
 
 # raise an exception if not valid
 def validate_getmempool_msg(msg_dict):
-    pass # TODO
+    validate_allowed_keys(msg_dict, {'type'}, 'getmempool')
 
 # raise an exception if not valid
 def validate_error_msg(msg_dict):
-    pass # TODO
+    keys = {'type', 'name', 'msg'}
+    validate_allowed_keys(msg_dict, keys, 'error')
 
+    for key in keys:
+        if key not in msg_dict:
+            raise MalformedMsgException(f"Missing required key {key} in error message")
+    
+    if not msg_dict['name'] in {'INVALID_FORMAT', 'INVALID_HANDSHAKE','INVALID_TX_CONSERVATION', 'INVALID_TX_SIGNATURE', 'INVALID_TX_OUTPOINT', 'INVALID_BLOCK_POW', 'INVALID_BLOCK_TIMESTAMP', 'INVALID_BLOCK_COINBASE', 'INVALID_GENESIS', 'UNKNOWN_OBJECT', 'UNFINDABLE_OBJECT', 'INVALID_ANCESTRY' }:
+        raise MalformedMsgException("Invalid error name")
+    
 # raise an exception if not valid
 def validate_ihaveobject_msg(msg_dict):
-    pass # TODO
+    keys = {'type', 'objectid'}
+    validate_allowed_keys(msg_dict, keys, 'ihaveobject')
+
+    if 'objectid' not in msg_dict:
+        raise MalformedMsgException(f"Missing required key objectid in ihaveobject message")
 
 # raise an exception if not valid
 def validate_getobject_msg(msg_dict):
-    pass # TODO
+    keys = {'type', 'objectid'}
+    validate_allowed_keys(msg_dict, keys, 'getobject')
+
+    if 'objectid' not in msg_dict:
+        raise MalformedMsgException(f"Missing required key objectid in getobject message")
 
 # raise an exception if not valid
 def validate_object_msg(msg_dict):
-    pass # TODO
+    keys = {'type', 'object'}
+    validate_allowed_keys(msg_dict, keys, 'object')
+
+    if 'object' not in msg_dict:
+        raise MalformedMsgException(f"Missing required key object in object message")
 
 # raise an exception if not valid
 def validate_chaintip_msg(msg_dict):
-    pass # todo
+    keys = {'type', 'blockid'}
+    validate_allowed_keys(msg_dict, keys, 'chaintip')
+
+    if 'blockid' not in msg_dict:
+        raise MalformedMsgException(f"Missing required key blockid in chaintip message")
     
 # raise an exception if not valid
 def validate_mempool_msg(msg_dict):
-    pass # todo
+    keys = {'type', 'txids'}
+    validate_allowed_keys(msg_dict, keys, 'mempool')
+
+    if 'txids' not in msg_dict:
+        raise MalformedMsgException(f"Missing required key txids in mempool message")
+
+    
         
 def validate_msg(msg_dict):
     msg_type = msg_dict['type']
@@ -169,7 +223,7 @@ def validate_msg(msg_dict):
     elif msg_type == 'mempool':
         validate_mempool_msg(msg_dict)
     else:
-        pass # TODO
+        raise UnsupportedMsgException(f"Unsupported message type {msg_type}")
 
 
 def handle_peers_msg(msg_dict):
@@ -306,6 +360,7 @@ async def handle_connection(reader, writer):
 
             print(f"Received: {msg_str}")
             # todo handle message
+            msg_dict = parse_msg(msg_str)
             
             # for now, close connection
             raise MessageException("closing connection")
