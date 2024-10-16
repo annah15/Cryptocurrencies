@@ -356,11 +356,16 @@ async def listen():
 
 # bootstrap peers. connect to hardcoded peers
 async def bootstrap():
-    pass # TODO
+    for host, port in const.PRELOADED_PEERS:
+        peer = Peer(host, port)
+        await connect_to_node(peer)
+
 
 # connect to some peers
 def resupply_connections():
-    pass # TODO
+    if len(CONNECTIONS) < const.LOW_CONNECTION_THRESHOLD:
+        listen()
+    
 
 
 async def init():
