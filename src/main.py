@@ -26,6 +26,7 @@ LISTEN_CFG = {
         "address": const.ADDRESS,
         "port": const.PORT
 }
+MAX_CONNECTIONS = 10
 
 # Add peer to your list of peers
 def add_peer(peer):
@@ -41,16 +42,29 @@ def del_connection(peer):
 
 # Make msg objects
 def mk_error_msg(error_str, error_name):
-    pass # TODO
+    return {
+        "type": "error",
+        "name": error_name,
+        "msg": error_str
+    }
 
 def mk_hello_msg():
-    pass # TODO
+    return {
+        "type": "hello",
+        "version": const.VERSION,
+        "agent": const.AGENT
+    }
 
 def mk_getpeers_msg():
-    pass # TODO
+    return {
+        "type": "getpeers"
+    }
 
 def mk_peers_msg():
-    pass # TODO
+    return {
+        "type": "peers",
+        "peers": [str(peer) for peer in list(PEERS)[-30:]]
+    }
 
 def mk_getobject_msg(objid):
     pass # TODO
@@ -75,11 +89,15 @@ def mk_getmempool_msg():
 
 # parses a message as json. returns decoded message
 def parse_msg(msg_str):
-    return json.loads(msg_str)
+    try:
+        msg_dict = json.loads(msg_str)
+    except json.JSONDecodeError:
+        raise MalformedMsgException("Invalid JSON format")
+    return msg_dict
 
 # Send data over the network as a message
 async def write_msg(writer, msg_dict):
-    msg = json.dumps(msg_dict, default=canonicalize)
+    msg = json.dumps(msg_dict, default=canonicalize) + "\n"
     writer.write(msg.encode())
     await writer.drain()
 
@@ -227,7 +245,13 @@ def validate_msg(msg_dict):
 
 
 def handle_peers_msg(msg_dict):
-    pass # TODO
+    peers = msg_dict['peers']
+    for peer_str in peers:
+        host, port = peer_str.split(':')
+        peer = Peer(host, int(port))
+        if peer not in PEERS:
+            add_peer(peer)
+            peer_db.store_peer(peer)
 
 
 def handle_error_msg(msg_dict, peer_self):
@@ -313,6 +337,8 @@ async def handle_connection(reader, writer):
     read_task = None
     queue_task = None
 
+    buffer = ""
+
     peer = None
     queue = asyncio.Queue()
     try:
@@ -331,8 +357,33 @@ async def handle_connection(reader, writer):
 
     try:
         # Send initial messages
+        hello_msg = mk_hello_msg()
+        await write_msg(writer, hello_msg)
 
         # Complete handshake
+        if read_task is None:
+                read_task = asyncio.create_task(reader.readline())
+            
+        # wait for hello message
+        first_msg = await asyncio.wait_for(read_task, timeout=const.HELLO_MSG_TIMEOUT)
+        
+        buffer += first_msg.decode()
+        # split the first message from the buffer
+        msg, buffer = buffer.split("\n", 1)
+        msg.canonicalize()
+        msg_dict = parse_msg(msg)
+
+        # Check if the message is a hello message
+        if msg_dict['type'] != 'hello':
+            raise MessageException("Invalid handshake")
+            
+        # Validate the hello message
+        validate_hello_msg(msg_dict, {'type', 'version', 'agent'}, 'hello')
+
+        # Get list of peers
+        peers_msg = mk_peers_msg()
+        await write_msg(writer, peers_msg)
+  
 
         msg_str = None
         while True:
@@ -359,9 +410,49 @@ async def handle_connection(reader, writer):
                 continue
 
             print(f"Received: {msg_str}")
-            # todo handle message
-            msg_dict = parse_msg(msg_str)
-            
+            # save the decoded message to a buffer
+            buffer += msg_str.decode()
+            while "\n" in buffer:
+                # split the first message from the buffer
+                msg, buffer = buffer.split("\n", 1)
+                # parse the message, validate it and handle it
+                try:
+                    msg.canonicalize()
+                    msg_dict = parse_msg(msg)
+                    validate_msg(msg_dict)
+                except MessageException as e:
+                    await write_msg(writer, mk_error_msg("INVALID_FORMAT", str(e)))
+                    continue
+                except KeyError as e:
+                    await write_msg(writer, mk_error_msg("INVALID_FORMAT", str(e)))
+                    continue
+                
+                msg_type = msg_dict['type']
+                if msg_type == 'get_peers':
+                    peers_msg = mk_peers_msg()
+                    await write_msg(writer, peers_msg)
+                elif msg_type == 'peers':
+                    await handle_peers_msg(msg_dict)
+                elif msg_type == 'getchaintip':
+                    await handle_getchaintip_msg(msg_dict)
+                elif msg_type == 'getmempool':
+                    await handle_getmempool_msg(msg_dict)
+                elif msg_type == 'error':
+                    await handle_error_msg(msg_dict)
+                elif msg_type == 'ihaveobject':
+                    await handle_ihaveobject_msg(msg_dict)
+                elif msg_type == 'getobject':
+                    await handle_getobject_msg(msg_dict)
+                elif msg_type == 'object':
+                    await handle_object_msg(msg_dict)
+                elif msg_type == 'chaintip':
+                    await handle_chaintip_msg(msg_dict)
+                elif msg_type == 'mempool':
+                    await handle_mempool_msg(msg_dict)
+                else:
+                    raise UnsupportedMsgException(f"Unsupported message type {msg_type}")
+
+
             # for now, close connection
             raise MessageException("closing connection")
 
@@ -418,9 +509,15 @@ async def bootstrap():
 
 # connect to some peers
 def resupply_connections():
+    # If we have less than the threshold of connections, connect to more peers
     if len(CONNECTIONS) < const.LOW_CONNECTION_THRESHOLD:
-        listen()
-    
+
+        available_peers = list(PEERS - set(CONNECTIONS.keys()))
+
+        random.shuffle(available_peers)
+
+        for peer in available_peers[:MAX_CONNECTIONS - len(CONNECTIONS)]:
+            asyncio.create_task(connect_to_node(peer))
 
 
 async def init():
@@ -429,7 +526,7 @@ async def init():
     global TX_WAIT_LOCK
     TX_WAIT_LOCK = asyncio.Condition()
 
-    # PEERS.update(peer_db.load_peers())
+    PEERS.update(peer_db.load_peers())
 
     bootstrap_task = asyncio.create_task(bootstrap())
     listen_task = asyncio.create_task(listen())
