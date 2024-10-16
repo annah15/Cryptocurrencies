@@ -136,19 +136,65 @@ def validate_hello_msg(msg_dict):
 
 # returns true iff host_str is a valid hostname
 def validate_hostname(host_str):
-    pass # TODO
+   
+    hostname_regex = r'^[a-zA-Z\d\.\-\_]{3,50}$'
+    
+    if not re.match(hostname_regex, host_str):
+        return False
+    
+    if '.' not in host_str or host_str.startswith('.') or host_str.endswith('.'):
+        return False
+    
+    if not re.search(r'[a-zA-Z]', host_str):
+        return False
+    
+    return True
 
 # returns true iff host_str is a valid ipv4 address
 def validate_ipv4addr(host_str):
-    pass # TODO
+    try:
+        ipaddress.IPv4Address(host_str)
+        return True
+    except ipaddress.AddressValueError:
+        return False
 
 # returns true iff peer_str is a valid peer address
 def validate_peer_str(peer_str):
-    pass # TODO
+    try:
+        host, port = peer_str.split(':')
+    except ValueError:
+        return False  # Must be in the form host:port
+    
+    if not (validate_hostname(host) or validate_ipv4addr(host)):
+        return False
+    
+    if not port.isdigit() or not (1 <= int(port) <= 65535):
+        return False
+    
+    return True
+
 
 # raise an exception if not valid
 def validate_peers_msg(msg_dict):
-    pass # TODO
+
+    validate_allowed_keys(msg_dict, {"type","peers"}, "peers")
+
+    if 'peers' not in msg_dict:
+        raise MalformedMsgException("Missing 'peers' key")
+
+    peers = msg_dict['peers']
+
+    if not isinstance(peers, list):
+        raise MalformedMsgException("'peers' key must be an array")
+
+    if len(peers) > 30:
+        raise MalformedMsgException("'peers' array size must not exceed 30")
+
+    for peer in peers:
+        if not validate_peer_str(peer): 
+            raise MalformedMsgException(f"Invalid peer address: {peer}")
+
+    return True
 
 # raise an exception if not valid
 def validate_getpeers_msg(msg_dict):
