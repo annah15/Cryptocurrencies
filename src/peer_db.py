@@ -15,9 +15,12 @@ def store_peer(peer: Peer, existing_peers: Iterable[Peer] = None):
 
 def load_peers() -> Set[Peer]:
     # read from file
-    with open(PEER_DB_FILE, 'r') as f:
-        peers = set()
-        for line in f:
-            host, port = line.strip().split(',')
-            peers.add(Peer(host, int(port)))
-    return peers
+    try:
+        with open(PEER_DB_FILE, 'r') as f:
+            peers = set()
+            for line in f:
+                host, port = line.strip().split(',')
+                peers.add(Peer(host, int(port)))
+        return peers
+    except FileNotFoundError:
+        return set()
