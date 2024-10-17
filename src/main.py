@@ -93,7 +93,7 @@ def parse_msg(msg_str):
         msg_dict = json.loads(msg_str)
     except json.JSONDecodeError:
         raise MalformedMsgException("Invalid JSON format")
-    return msg_dict
+    return canonicalize(msg_dict)
 
 # Send data over the network as a message
 async def write_msg(writer, msg_dict):
@@ -376,14 +376,38 @@ async def handle_mempool_msg(msg_dict):
 
 # Helper function
 async def handle_queue_msg(msg_dict, writer):
-    pass # TODO
+    # Determine message type and handle it accordingly
+    msg_type = msg_dict['type']
+    if msg_type == 'get_peers':
+        peers_msg = mk_peers_msg()
+        await write_msg(writer, peers_msg)
+    elif msg_type == 'peers':
+        await handle_peers_msg(msg_dict)
+    elif msg_type == 'getchaintip':
+        await handle_getchaintip_msg(msg_dict)
+    elif msg_type == 'getmempool':
+        await handle_getmempool_msg(msg_dict)
+    elif msg_type == 'error':
+        await handle_error_msg(msg_dict)
+    elif msg_type == 'ihaveobject':
+        await handle_ihaveobject_msg(msg_dict)
+    elif msg_type == 'getobject':
+        await handle_getobject_msg(msg_dict)
+    elif msg_type == 'object':
+        await handle_object_msg(msg_dict)
+    elif msg_type == 'chaintip':
+        await handle_chaintip_msg(msg_dict)
+    elif msg_type == 'mempool':
+        await handle_mempool_msg(msg_dict)
+    else:
+        raise UnsupportedMsgException(f"Unsupported message type {msg_type}")
+
+
 
 # how to handle a connection
 async def handle_connection(reader, writer):
     read_task = None
     queue_task = None
-
-    buffer = ""
 
     peer = None
     queue = asyncio.Queue()
@@ -401,26 +425,27 @@ async def handle_connection(reader, writer):
             pass
         return
 
+    buffer = ''
     try:
         # Send initial messages
-        hello_msg = mk_hello_msg()
-        await write_msg(writer, hello_msg)
+        await write_msg(writer, mk_hello_msg())
 
         # Complete handshake
-        if read_task is None:
-                read_task = asyncio.create_task(reader.readline())
+        while True:
+            read_task = asyncio.create_task(reader.readline())
             
-        # wait for hello message
-        first_msg = await asyncio.wait_for(read_task, timeout=const.HELLO_MSG_TIMEOUT)
-        
-        buffer += first_msg.decode()
-        # split the first message from the buffer
-        msg, buffer = buffer.split("\n", 1)
-        msg.canonicalize()
-        msg_dict = parse_msg(msg)
+            # wait for hello message from peer and add it to buffer
+            data = await asyncio.wait_for(read_task, timeout=const.HELLO_MSG_TIMEOUT)
+            buffer += data.decode()
+
+            # once recieved split the first message from the buffer
+            if "\n" in buffer:
+                first_msg, buffer = buffer.split("\n", 1)
+                first_msg_dict = parse_msg(first_msg)
+                break
 
         # Check if the message is a hello message
-        if msg_dict['type'] != 'hello':
+        if first_msg_dict['type'] != 'hello':
             raise MessageException("Invalid handshake")
             
         # Validate the hello message
@@ -462,42 +487,9 @@ async def handle_connection(reader, writer):
                 # split the first message from the buffer
                 msg, buffer = buffer.split("\n", 1)
                 # parse the message, validate it and handle it
-                try:
-                    msg.canonicalize()
-                    msg_dict = parse_msg(msg)
-                    validate_msg(msg_dict)
-                except MessageException as e:
-                    await write_msg(writer, mk_error_msg("INVALID_FORMAT", str(e)))
-                    continue
-                except KeyError as e:
-                    await write_msg(writer, mk_error_msg("INVALID_FORMAT", str(e)))
-                    continue
-                
-                msg_type = msg_dict['type']
-                if msg_type == 'get_peers':
-                    peers_msg = mk_peers_msg()
-                    await write_msg(writer, peers_msg)
-                elif msg_type == 'peers':
-                    await handle_peers_msg(msg_dict)
-                elif msg_type == 'getchaintip':
-                    await handle_getchaintip_msg(msg_dict)
-                elif msg_type == 'getmempool':
-                    await handle_getmempool_msg(msg_dict)
-                elif msg_type == 'error':
-                    await handle_error_msg(msg_dict)
-                elif msg_type == 'ihaveobject':
-                    await handle_ihaveobject_msg(msg_dict)
-                elif msg_type == 'getobject':
-                    await handle_getobject_msg(msg_dict)
-                elif msg_type == 'object':
-                    await handle_object_msg(msg_dict)
-                elif msg_type == 'chaintip':
-                    await handle_chaintip_msg(msg_dict)
-                elif msg_type == 'mempool':
-                    await handle_mempool_msg(msg_dict)
-                else:
-                    raise UnsupportedMsgException(f"Unsupported message type {msg_type}")
-
+                msg_dict = parse_msg(msg)
+                validate_msg(msg_dict)
+                await queue.put(msg_dict)
 
             # for now, close connection
             raise MessageException("closing connection")
@@ -526,6 +518,7 @@ async def handle_connection(reader, writer):
             queue_task.cancel()
 
 
+# Connect to another node
 async def connect_to_node(peer: Peer):
     try:
         reader, writer = await asyncio.open_connection(peer.host, peer.port,
@@ -536,7 +529,7 @@ async def connect_to_node(peer: Peer):
 
     await handle_connection(reader, writer)
 
-
+# Start TCP server and listen for incoming connections
 async def listen():
     server = await asyncio.start_server(handle_connection, LISTEN_CFG['address'],
             LISTEN_CFG['port'], limit=const.RECV_BUFFER_LIMIT)
@@ -548,9 +541,11 @@ async def listen():
 
 # bootstrap peers. connect to hardcoded peers
 async def bootstrap():
+    # Connect to preloaded peers
     for host, port in const.PRELOADED_PEERS:
         peer = Peer(host, port)
         await connect_to_node(peer)
+    # Add 
 
 
 # connect to some peers
