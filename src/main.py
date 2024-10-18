@@ -30,15 +30,17 @@ MAX_CONNECTIONS = 10
 
 # Add peer to your list of peers
 def add_peer(peer):
-    pass # TODO
+    PEERS.add(peer)
 
 # Add connection if not already open
 def add_connection(peer, queue):
-    pass # TODO
+    if peer not in CONNECTIONS:
+        CONNECTIONS[peer] = queue
 
 # Delete connection
 def del_connection(peer):
-    pass # TODO
+    if peer in CONNECTIONS:
+        del CONNECTIONS[peer]
 
 # Make msg objects
 def mk_error_msg(error_str, error_name):
@@ -67,25 +69,44 @@ def mk_peers_msg():
     }
 
 def mk_getobject_msg(objid):
-    pass # TODO
+    return {
+        "type": "getobject",
+        "objectid": objid.lower()
+    }
 
 def mk_object_msg(obj_dict):
-    pass # TODO
+    return {
+        "type": "object",
+        "object": obj_dict.lower()
+    }
 
 def mk_ihaveobject_msg(objid):
-    pass # TODO
+    return {
+        "type": "ihaveobject",
+        "objectid": objid.lower()
+    }
 
 def mk_chaintip_msg(blockid):
-    pass # TODO
+    return {
+        "type": "chaintip",
+        "blockid": blockid.lower()
+    }
 
 def mk_mempool_msg(txids):
-    pass # TODO
+    return {
+        "type": "mempool",
+        "txids": txids
+    }
 
 def mk_getchaintip_msg():
-    pass # TODO
+    return {
+        "type": "getchaintip"
+    }
 
 def mk_getmempool_msg():
-    pass # TODO
+    return {
+        "type": "getmempool"
+    }
 
 # parses a message as json. returns decoded message
 def parse_msg(msg_str):
@@ -97,8 +118,8 @@ def parse_msg(msg_str):
 
 # Send data over the network as a message
 async def write_msg(writer, msg_dict):
-    msg = json.dumps(msg_dict, default=canonicalize) + "\n"
-    writer.write(msg.encode())
+    msg_str = json.dumps(msg_dict, sort_keys=True, separators=(',', ':'))
+    writer.write(msg_str.encode() + b'\n')
     await writer.drain()
 
 # Check if message contains no invalid keys,
@@ -375,7 +396,7 @@ async def handle_mempool_msg(msg_dict):
     pass # TODO
 
 # Helper function
-async def handle_queue_msg(msg_dict, writer):
+async def handle_msg(msg_dict, writer):
     # Determine message type and handle it accordingly
     msg_type = msg_dict['type']
     if msg_type == 'get_peers':
@@ -402,10 +423,11 @@ async def handle_queue_msg(msg_dict, writer):
     else:
         raise UnsupportedMsgException(f"Unsupported message type {msg_type}")
 
-
+async def handle_queue_msg(msg_dict, writer):
+    pass # TODO
 
 # how to handle a connection
-async def handle_connection(reader, writer):
+async def handle_connection(reader:asyncio.StreamReader, writer:asyncio.StreamWriter):
     read_task = None
     queue_task = None
 
@@ -439,21 +461,24 @@ async def handle_connection(reader, writer):
             buffer += data.decode()
 
             # once recieved split the first message from the buffer
-            if "\n" in buffer:
-                first_msg, buffer = buffer.split("\n", 1)
+            if re.search(r'(?<!\\)\n', buffer):
+                first_msg, buffer = re.split(r'(?<!\\)\n', buffer, 1)
                 first_msg_dict = parse_msg(first_msg)
                 break
 
         # Check if the message is a hello message
         if first_msg_dict['type'] != 'hello':
-            raise MessageException("Invalid handshake")
+            try:
+                await write_msg(writer, mk_error_msg("Timeout", "INVALID_HANDSHAKE"))
+            except:
+                pass
+            raise Exception("First message is not a hello message")
             
         # Validate the hello message
         validate_hello_msg(msg_dict, {'type', 'version', 'agent'}, 'hello')
 
         # Get list of peers
-        peers_msg = mk_peers_msg()
-        await write_msg(writer, peers_msg)
+        await write_msg(writer, mk_getpeers_msg())
   
 
         msg_str = None
@@ -483,27 +508,28 @@ async def handle_connection(reader, writer):
             print(f"Received: {msg_str}")
             # save the decoded message to a buffer
             buffer += msg_str.decode()
-            while "\n" in buffer:
+            while re.search(r'(?<!\\)\n', buffer):
                 # split the first message from the buffer
-                msg, buffer = buffer.split("\n", 1)
+                msg, buffer = re.split(r'(?<!\\)\n', buffer, 1)
                 # parse the message, validate it and handle it
                 msg_dict = parse_msg(msg)
                 validate_msg(msg_dict)
-                await queue.put(msg_dict)
 
             # for now, close connection
             raise MessageException("closing connection")
 
+    # if a timeout exception is raised (during the first message send), then send an error message with the error name INVALID_HANDSHAKE
     except asyncio.exceptions.TimeoutError:
         print("{}: Timeout".format(peer))
         try:
-            await write_msg(writer, mk_error_msg("Timeout"))
+            await write_msg(writer, mk_error_msg("Timeout", "INVALID_HANDSHAKE"))
         except:
             pass
+    # if a message exception is raised, then send an error message with the error name INVALID_FORMAT
     except MessageException as e:
         print("{}: {}".format(peer, str(e)))
         try:
-            await write_msg(writer, mk_error_msg(e.NETWORK_ERROR_MESSAGE))
+            await write_msg(writer, mk_error_msg(e.NETWORK_ERROR_MESSAGE, "INVALID_FORMAT"))
         except:
             pass
     except Exception as e:
@@ -545,7 +571,6 @@ async def bootstrap():
     for host, port in const.PRELOADED_PEERS:
         peer = Peer(host, port)
         await connect_to_node(peer)
-    # Add 
 
 
 # connect to some peers
