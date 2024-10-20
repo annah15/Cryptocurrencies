@@ -284,32 +284,34 @@ def validate_mempool_msg(msg_dict):
     
         
 def validate_msg(msg_dict):
-    msg_type = msg_dict['type']
-    if msg_type == 'hello':
-        validate_hello_msg(msg_dict)
-    elif msg_type == 'getpeers':
-        validate_getpeers_msg(msg_dict)
-    elif msg_type == 'peers':
-        validate_peers_msg(msg_dict)
-    elif msg_type == 'getchaintip':
-        validate_getchaintip_msg(msg_dict)
-    elif msg_type == 'getmempool':
-        validate_getmempool_msg(msg_dict)
-    elif msg_type == 'error':
-        validate_error_msg(msg_dict)
-    elif msg_type == 'ihaveobject':
-        validate_ihaveobject_msg(msg_dict)
-    elif msg_type == 'getobject':
-        validate_getobject_msg(msg_dict)
-    elif msg_type == 'object':
-        validate_object_msg(msg_dict)
-    elif msg_type == 'chaintip':
-        validate_chaintip_msg(msg_dict)
-    elif msg_type == 'mempool':
-        validate_mempool_msg(msg_dict)
-    else:
-        raise UnsupportedMsgException(f"Unsupported message type {msg_type}")
-
+    try:
+        msg_type = msg_dict['type']
+        if msg_type == 'hello':
+            validate_hello_msg(msg_dict)
+        elif msg_type == 'getpeers':
+            validate_getpeers_msg(msg_dict)
+        elif msg_type == 'peers':
+            validate_peers_msg(msg_dict)
+        elif msg_type == 'getchaintip':
+            validate_getchaintip_msg(msg_dict)
+        elif msg_type == 'getmempool':
+            validate_getmempool_msg(msg_dict)
+        elif msg_type == 'error':
+            validate_error_msg(msg_dict)
+        elif msg_type == 'ihaveobject':
+            validate_ihaveobject_msg(msg_dict)
+        elif msg_type == 'getobject':
+            validate_getobject_msg(msg_dict)
+        elif msg_type == 'object':
+            validate_object_msg(msg_dict)
+        elif msg_type == 'chaintip':
+            validate_chaintip_msg(msg_dict)
+        elif msg_type == 'mempool':
+            validate_mempool_msg(msg_dict)
+        else:
+            raise UnsupportedMsgException(f"Unsupported message type {msg_type}")
+    except KeyError as e:
+        raise MalformedMsgException(f"Missing required key type in message")
 
 def handle_peers_msg(msg_dict):
     peers = msg_dict['peers']
@@ -396,6 +398,15 @@ async def handle_mempool_msg(msg_dict):
     pass # TODO
 
 # Helper function
+async def process_msg(msg_str, writer):
+    try:
+        msg_dict = parse_msg(msg_str)
+        validate_msg(msg_dict)
+        await handle_msg(msg_dict, writer)
+
+    except MessageException as e:
+        await write_msg(writer, mk_error_msg(e.NETWORK_ERROR_MESSAGE, "INVALID_FORMAT"))
+
 async def handle_msg(msg_dict, writer):
     # Determine message type and handle it accordingly
     msg_type = msg_dict['type']
@@ -447,7 +458,7 @@ async def handle_connection(reader:asyncio.StreamReader, writer:asyncio.StreamWr
             pass
         return
 
-    buffer = ''
+    buffer = ""
     try:
         # Send initial messages
         await write_msg(writer, mk_hello_msg())
@@ -458,6 +469,10 @@ async def handle_connection(reader:asyncio.StreamReader, writer:asyncio.StreamWr
             
             # wait for hello message from peer and add it to buffer
             data = await asyncio.wait_for(read_task, timeout=const.HELLO_MSG_TIMEOUT)
+
+            if not data:
+                raise Exception("Connection closed before handshake")
+
             buffer += data.decode()
 
             # once recieved split the first message from the buffer
@@ -469,18 +484,18 @@ async def handle_connection(reader:asyncio.StreamReader, writer:asyncio.StreamWr
         # Check if the message is a hello message
         if first_msg_dict['type'] != 'hello':
             try:
-                await write_msg(writer, mk_error_msg("Timeout", "INVALID_HANDSHAKE"))
+                await write_msg(writer, mk_error_msg("First message is not a hello message", "INVALID_HANDSHAKE"))
             except:
                 pass
             raise Exception("First message is not a hello message")
             
         # Validate the hello message
-        validate_hello_msg(msg_dict, {'type', 'version', 'agent'}, 'hello')
-
-        # Get list of peers
-        await write_msg(writer, mk_getpeers_msg())
-  
-
+        try:
+            validate_hello_msg(first_msg_dict, {'type', 'version', 'agent'}, 'hello')
+        except MalformedMsgException as e:
+            await write_msg(writer, mk_error_msg(e.NETWORK_ERROR_MESSAGE, "INVALID_HANDSHAKE"))
+            raise Exception(e.NETWORK_ERROR_MESSAGE)
+        
         msg_str = None
         while True:
             if read_task is None:
@@ -507,13 +522,12 @@ async def handle_connection(reader:asyncio.StreamReader, writer:asyncio.StreamWr
 
             print(f"Received: {msg_str}")
             # save the decoded message to a buffer
-            buffer += msg_str.decode()
+            buffer += msg_str.decode('utf-8')
             while re.search(r'(?<!\\)\n', buffer):
                 # split the first message from the buffer
                 msg, buffer = re.split(r'(?<!\\)\n', buffer, 1)
                 # parse the message, validate it and handle it
-                msg_dict = parse_msg(msg)
-                validate_msg(msg_dict)
+                await process_msg(msg, writer)
 
             # for now, close connection
             raise MessageException("closing connection")
@@ -522,7 +536,7 @@ async def handle_connection(reader:asyncio.StreamReader, writer:asyncio.StreamWr
     except asyncio.exceptions.TimeoutError:
         print("{}: Timeout".format(peer))
         try:
-            await write_msg(writer, mk_error_msg("Timeout", "INVALID_HANDSHAKE"))
+            await write_msg(writer, mk_error_msg("No hello message received within 20s.", "INVALID_HANDSHAKE"))
         except:
             pass
     # if a message exception is raised, then send an error message with the error name INVALID_FORMAT
