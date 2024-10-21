@@ -41,8 +41,6 @@ def add_peer(peer: Peer):
 # Add connection if not already open
 def add_connection(peer, queue):
     global CONNECTIONS
-
-    print("Adding connection with {}".format(peer))
     host, port = peer
 
     p = Peer(host, port)
@@ -274,11 +272,12 @@ def validate_msg(msg_dict):
 def handle_peers_msg(msg_dict):
     global PEERS
     new_peers = msg_dict['peers']
+    print("Saving new peers: {}".format(new_peers))
     for peer_str in new_peers:
         host, port = peer_str.split(':')
         peer = Peer(host, int(port))
 
-        if peer.host_str == const.ADDRESS and peer.port == LISTEN_CFG['port']:
+        if peer.host == const.ADDRESS and peer.port == LISTEN_CFG['port']:
             print("Received ourselves, skipping...")
             continue
 
@@ -404,6 +403,8 @@ async def handle_connection(reader:asyncio.StreamReader, writer:asyncio.StreamWr
             raise Exception("Failed to get peername!")
 
         print("New connection with {}".format(peer))
+        # Add the connection to the list of connections
+        add_connection(peer, queue)
     except Exception as e:
         print(str(e))
         try:
@@ -424,16 +425,17 @@ async def handle_connection(reader:asyncio.StreamReader, writer:asyncio.StreamWr
             data = await asyncio.wait_for(reader.readline(), timeout=const.HELLO_MSG_TIMEOUT)
         except asyncio.exceptions.TimeoutError:
             raise InvalidHandshakeException("No hello message received within 20s")
+        
+        if not data:
+            raise MessageException("closing connection")
+
         buffer += data.decode()
 
-        first_msg, buffer = re.split(r'(?<!\\)\n', buffer, 1)
+        first_msg, buffer = re.split(r'(?<!\\)\n', buffer, 1) if len(re.split(r'(?<!\\)\n', buffer, 1))>1 else (buffer, "")
         first_msg_dict = parse_msg(first_msg)
 
         # Validate the hello message (also checks if the message is a hello message)
         validate_hello_msg(first_msg_dict)
-        
-        # Add the connection to the list of connections
-        add_connection(peer, queue)
 
         msg_str = None
         while True:
@@ -443,8 +445,10 @@ async def handle_connection(reader:asyncio.StreamReader, writer:asyncio.StreamWr
                 queue_task = asyncio.create_task(queue.get())
 
             # wait for network or queue messages
+
             done, pending = await asyncio.wait([read_task, queue_task],
-                    return_when = asyncio.FIRST_COMPLETED)
+                                                return_when = asyncio.FIRST_COMPLETED)
+
             if read_task in done:
                 msg_str = read_task.result()
                 read_task = None
@@ -459,12 +463,15 @@ async def handle_connection(reader:asyncio.StreamReader, writer:asyncio.StreamWr
             if read_task is not None:
                 continue
 
+            if not msg_str:
+                raise MessageException("closing connection")
+            
             print(f"Received: {msg_str}")
             # save the decoded message to a buffer
             buffer += msg_str.decode()
             while re.search(r'(?<!\\)\n', buffer):
                 # split the first message from the buffer
-                msg, buffer = re.split(r'(?<!\\)\n', buffer, 1)
+                msg, buffer = re.split(r'(?<!\\)\n', buffer, 1) if len(re.split(r'(?<!\\)\n', buffer, 1))>1 else (buffer.strip(), "")
                 # parse the message, validate it and handle it
                 msg_dict = parse_msg(msg)
                 validate_msg(msg_dict)
@@ -485,6 +492,8 @@ async def handle_connection(reader:asyncio.StreamReader, writer:asyncio.StreamWr
             await write_msg(writer, mk_error_msg(e.NETWORK_ERROR_MESSAGE, "INVALID_FORMAT"))
         except:
             pass
+    except ValueError as e:
+        print(str(e))
     except Exception as e:
         print("Error not handeled: {}: {}".format(peer, str(e)))
     finally:
@@ -500,7 +509,7 @@ async def handle_connection(reader:asyncio.StreamReader, writer:asyncio.StreamWr
 # Connect to another node
 async def connect_to_node(peer: Peer):
     try:
-        reader, writer = await asyncio.open_connection(peer.host, peer.port,
+        reader, writer = await asyncio.open_connection(peer.host_formated, peer.port,
                 limit=const.RECV_BUFFER_LIMIT)
     except Exception as e:
         print(str(e))
@@ -531,7 +540,7 @@ async def bootstrap():
 # connect to some peers
 def resupply_connections():
     # If we have less than the threshold of connections, connect to more peers
-    if len(CONNECTIONS) < const.LOW_CONNECTION_THRESHOLD:
+    if len(CONNECTIONS.keys()) < const.LOW_CONNECTION_THRESHOLD:
 
         available_peers = list(PEERS - set(CONNECTIONS.keys()))
 
