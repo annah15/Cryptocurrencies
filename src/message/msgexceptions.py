@@ -21,3 +21,7 @@ class UnsupportedMsgException(MessageException):
 
 class UnexpectedMsgException(MessageException):
     NETWORK_ERROR_MESSAGE = "Unexpected message received"
+
+class InvalidHandshakeException(Exception):
+    def __init__(self, message) -> None:
+        self.message = message
