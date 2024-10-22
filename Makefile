@@ -17,13 +17,13 @@ run-tests:
 
 # don't touch these targets 
 docker-build:
-	docker-compose build
+	docker compose build
 
 docker-up:
-	docker-compose up -d
+	docker compose up -d
 
 docker-down:
-	docker-compose down
+	docker compose down
 
 submission:
 	mkdir -p _submission

@@ -79,7 +79,7 @@ def mk_getpeers_msg():
 def mk_peers_msg():
     return {
         "type": "peers",
-        "peers": [str(const.ADDRESS) + ':' + str(LISTEN_CFG['port'])] + [str(peer) for peer in list(PEERS)[:29]]
+        "peers": [str(const.ADDRESS) + ':' + str(LISTEN_CFG['port'])] + [str(peer) for peer in list(PEERS)[-29:]]
     }
 
 def mk_getobject_msg(objid):
@@ -279,6 +279,10 @@ def handle_peers_msg(msg_dict):
 
         if peer.host == const.ADDRESS and peer.port == LISTEN_CFG['port']:
             print("Received ourselves, skipping...")
+            continue
+            
+        if peer.host == '127.0.0.1':
+            print("Received localhost, skipping...")
             continue
 
         if peer not in PEERS:

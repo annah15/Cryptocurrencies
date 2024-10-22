@@ -2,7 +2,7 @@ from Peer import Peer
 
 
 PORT = 18018
-ADDRESS = "0.0.0.0"
+ADDRESS = "127.0.0.1"
 SERVICE_LOOP_DELAY = 10
 VERSION = '0.10.0'
 AGENT = 'BlockExplorer'
