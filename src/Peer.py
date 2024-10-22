@@ -21,6 +21,7 @@ class Peer:
                 self.host = ipaddress.ip_address(ip_str)
             except:
                 self.host_formated = host_str
+                self.host = host_str
 
     def __str__(self) -> str:
         return f"{self.host_formated}:{self.port}"

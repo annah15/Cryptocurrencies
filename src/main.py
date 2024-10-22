@@ -367,19 +367,19 @@ async def handle_msg(msg_dict, writer):
     if msg_type == 'getpeers':
         await write_msg(writer, mk_peers_msg())
     elif msg_type == 'peers':
-        await handle_peers_msg(msg_dict)
+        handle_peers_msg(msg_dict)
     elif msg_type == 'getchaintip':
-        await handle_getchaintip_msg(msg_dict)
+        await handle_getchaintip_msg(msg_dict, writer)
     elif msg_type == 'getmempool':
-        await handle_getmempool_msg(msg_dict)
+        await handle_getmempool_msg(msg_dict, writer)
     elif msg_type == 'error':
-        await handle_error_msg(msg_dict)
+        handle_error_msg(msg_dict, Peer(LISTEN_CFG['address'], LISTEN_CFG['port']))
     elif msg_type == 'ihaveobject':
         await handle_ihaveobject_msg(msg_dict)
     elif msg_type == 'getobject':
         await handle_getobject_msg(msg_dict)
     elif msg_type == 'object':
-        await handle_object_msg(msg_dict)
+        await handle_object_msg(msg_dict, Peer(LISTEN_CFG['address'], LISTEN_CFG['port']) ,writer)
     elif msg_type == 'chaintip':
         await handle_chaintip_msg(msg_dict)
     elif msg_type == 'mempool':
@@ -478,7 +478,7 @@ async def handle_connection(reader:asyncio.StreamReader, writer:asyncio.StreamWr
                 await handle_msg(msg_dict, writer)
 
             # for now, close connection
-            raise MessageException("closing connection")
+            #raise MessageException("closing connection")
 
     except InvalidHandshakeException as e:
         print("{}: {}".format(peer, str(e.message)))
@@ -530,8 +530,8 @@ async def listen():
 # bootstrap peers. connect to hardcoded peers
 async def bootstrap():
     # Connect to preloaded peers
-    for host, port in const.PRELOADED_PEERS:
-        peer = Peer(host, port)
+    for peer in const.PRELOADED_PEERS:
+        print("Connecting to peer: {}".format(peer))
         task = asyncio.create_task(connect_to_node(peer))
         add_peer(peer)
         BACKGROUND_TASKS.add(task)
