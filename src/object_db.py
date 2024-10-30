@@ -2,10 +2,15 @@ import sqlite3
 
 import objects
 import constants as const
+import os
 
 from jcs import canonicalize
 
 def create_db():
+    if os.path.exists(const.DB_NAME):
+        print("Database already exists...")
+        return
+    
     con = sqlite3.connect(const.DB_NAME)
     try:
         cur = con.cursor()
