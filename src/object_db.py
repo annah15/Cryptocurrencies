@@ -3,6 +3,8 @@ import sqlite3
 import objects
 import constants as const
 
+from jcs import canonicalize
+
 def create_db():
     con = sqlite3.connect(const.DB_NAME)
     try:
@@ -10,30 +12,23 @@ def create_db():
         # Create database
         # Create table
         cur.execute('''CREATE TABLE IF NOT EXISTS blocks
-                     (blockid TEXT PRIMARY KEY,
-                     created INTEGER,
-                     miner TEXT,
-                     nonce TEXT,
-                     note TEXT
-                     prev TEXT,
-                     target INTEGER,
-                    )''')
+                     (id TEXT PRIMARY KEY,
+                      data TEXT)''')
         
         cur.execute('''CREATE TABLE IF NOT EXISTS transactions
-                        (txid TEXT PRIMARY KEY,
-                        created INTEGER,
-                        miner TEXT,
-                        nonce TEXT,
-                        note TEXT,
-                        type TEXT)''')
+                        (id TEXT PRIMARY KEY,
+                         data TEXT)''')
         
         cur.execute('''CREATE TABLE IF NOT EXISTS block_transactions
-                        (block_id TEXT,
-                        tx_id TEXT,
-                        FOREIGN KEY(block_id) REFERENCES blocks(id),
-                        FOREIGN KEY(tx_id) REFERENCES transactions(id))''')          
+                        (blockid TEXT,
+                        txid TEXT,
+                        FOREIGN KEY(blockid) REFERENCES blocks(id),
+                        FOREIGN KEY(txid) REFERENCES transactions(id))''')          
 
-        # TODO - Preload genesis block
+        # Preload genesis block
+        genesis_block = canonicalize(const.GENESIS_BLOCK)
+        genesis_block_row = (const.GENESIS_BLOCK_ID, genesis_block)
+        cur.execute("INSERT INTO blocks VALUES (?,?)", genesis_block_row)
 
         # Save (commit) the changes
         con.commit()
