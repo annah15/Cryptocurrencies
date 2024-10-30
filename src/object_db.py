@@ -60,3 +60,19 @@ def object_exists(objid):
         print(str(e))
     finally:
         con.close()
+
+def store_object(obj_id, obj_dict):
+    con = sqlite3.connect(const.DB_NAME)
+    try:
+        cur = con.cursor()
+        if obj_dict["type"] == "block":
+            cur.execute("INSERT INTO blocks VALUES (?,?)", (obj_id, canonicalize(obj_dict)))
+        else:
+            cur.execute("INSERT INTO transactions VALUES (?,?)", (obj_id, canonicalize(obj_dict)))
+        con.commit()
+        print("Object stored successfully!")
+    except Exception as e:
+        con.rollback()
+        print(str(e))
+    finally:
+        con.close()

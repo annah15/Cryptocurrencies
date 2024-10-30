@@ -336,8 +336,21 @@ async def del_verify_block_task(task, objid):
 
 # what to do when an object message arrives
 async def handle_object_msg(msg_dict, peer_self, writer):
-    pass # TODO
+    object_dict = msg_dict['object']
+    if not objects.validate_object(object_dict):
+        raise ErrorInvalidFormat("Received object is not valid!")
 
+    object_id = objects.get_objid(object_dict)
+    if object_db.object_exists(object_id):
+        return
+    
+    # store object in db
+    object_db.store_object(object_id, object_dict)
+
+    # gossip the object to all connected peers
+    for queue in CONNECTIONS.values():
+        await queue.put(mk_ihaveobject_msg(object_id))
+    
 
 # returns the chaintip blockid
 def get_chaintip_blockid():
