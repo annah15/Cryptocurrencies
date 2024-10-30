@@ -152,15 +152,25 @@ def validate_hello_msg(msg_dict):
 
 # returns true iff host_str is a valid hostname
 def validate_hostname(host_str):
-    pass # TODO
+    return re.match(r'^(?=.*[a-zA-Z])[a-zA-Z\d\.\-\_]{3,50}$', host_str) and '.' in host_str[1:-1]
 
 # returns true iff host_str is a valid ipv4 address
 def validate_ipv4addr(host_str):
-    pass # TODO
+    try:
+        ipaddress.IPv4Address(host_str)
+        return True
+    except ipaddress.AddressValueError:
+        return False
 
 # returns true iff peer_str is a valid peer address
 def validate_peer_str(peer_str):
-    pass # TODO
+    try:
+        host, port = peer_str.split(':')
+    except:
+        return False
+    if int(port)<1 or int(port)> 65535:
+        return False
+    return (validate_hostname(host) or validate_ipv4addr(host))
 
 # raise an exception if not valid
 def validate_peers_msg(msg_dict):
@@ -183,7 +193,9 @@ def validate_peers_msg(msg_dict):
                 raise ErrorInvalidFormat(
                     "Message malformed: peer is not a string!")
 
-            validate_peer_str(p)
+            if not validate_peer_str(p):
+                raise ErrorInvalidFormat(
+                    "Message malformed: peer does not have a valid format address:host!")
 
     except ErrorInvalidFormat as e:
         raise e
