@@ -3,3 +3,5 @@ message/__pycache__
 *.swp
 .vscode/
 peers.csv
+.idea
+.env

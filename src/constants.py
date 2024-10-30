@@ -2,10 +2,10 @@ from Peer import Peer
 
 
 PORT = 18018
-ADDRESS = "127.0.0.1"
+ADDRESS = "0.0.0.0"
 SERVICE_LOOP_DELAY = 10
 VERSION = '0.10.0'
-AGENT = 'BlockExplorer'
+AGENT = ''
 LOW_CONNECTION_THRESHOLD = 3
 HELLO_MSG_TIMEOUT = 20.0
 DB_NAME = 'db.db'

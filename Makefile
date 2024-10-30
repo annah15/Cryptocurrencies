@@ -17,17 +17,17 @@ run-tests:
 
 # don't touch these targets 
 docker-build:
-	docker compose build
+	docker-compose build
 
 docker-up:
-	docker compose up -d
+	docker-compose up -d
 
 docker-down:
-	docker compose down
+	docker-compose down
 
 submission:
 	mkdir -p _submission
-	tar --exclude='./_submission' --exclude='./_test' -czf _submission/submission.tgz .
+	tar --exclude='./.idea' --exclude='./_submission' --exclude='./_test' --exclude='./.git' -czf _submission/submission.tgz .
 	@echo Finished creating submission archive _submission/submission.tgz
 	@echo Run make check-submission now to check if our automated grader will be able to connect to it
 

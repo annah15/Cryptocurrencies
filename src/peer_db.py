@@ -5,23 +5,32 @@ PEER_DB_FILE = "peers.csv"
 
 
 def store_peer(peer: Peer, existing_peers: Iterable[Peer] = None):
-    # append to file
     if existing_peers is None:
         existing_peers = load_peers()
-    
+    # avoid duplicates
+    if peer in existing_peers:
+        return
+
+    with open(PEER_DB_FILE, 'a') as file:
+        file.write(f"{peer.host_formated},{peer.port}\n")
+
+def remove_peer(peer: Peer):
+    existing_peers = load_peers()
     if not peer in existing_peers:
-        with open(PEER_DB_FILE, 'a') as f:
-            f.write(f"{str(peer.host)},{peer.port}\n")
-    
+        return False
+
+    with open(PEER_DB_FILE, 'w') as file:
+        for p in existing_peers:
+            if not p == peer:
+                file.write(f"{p.host_formated},{p.port}\n")
+
 def load_peers() -> Set[Peer]:
-    # read from file
-    try:
-        with open(PEER_DB_FILE, 'r') as f:
-            peers = set()
-            f.readline()  # Skip the header line
-            for line in f.readlines():
-                host, port = line.strip().split(',')
-                peers.add(Peer(host, int(port)))
-        return peers
-    except FileNotFoundError:
-        return set()
+    with open(PEER_DB_FILE, 'r') as file:
+        # skip the header
+        peers_str = file.readlines()[1:]
+
+    result = set()
+    for line in peers_str:
+        host, port = line.split(',')
+        result.add(Peer(host, int(port.strip())))
+    return result
