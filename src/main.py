@@ -294,7 +294,14 @@ async def handle_ihaveobject_msg(msg_dict, writer):
 
 
 async def handle_getobject_msg(msg_dict, writer):
-    pass # TODO
+    object_id = msg_dict['object']
+
+    obj_dict = object_db.fetch_object(object_id)
+    # if object exists, send it
+    if obj_dict:
+        await write_msg(writer, mk_object_msg(obj_dict))
+    else:
+        await write_msg(writer, mk_error_msg("Object with id {} not found".format(object_id), "OBJECT_NOT_FOUND"))
 
 # return a list of transactions that tx_dict references
 def gather_previous_txs(db_cur, tx_dict):

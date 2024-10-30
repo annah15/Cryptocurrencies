@@ -3,6 +3,7 @@ import sqlite3
 import objects
 import constants as const
 import os
+import json
 
 from jcs import canonicalize
 
@@ -73,6 +74,29 @@ def store_object(obj_id, obj_dict):
         print("Object stored successfully!")
     except Exception as e:
         con.rollback()
+        print(str(e))
+    finally:
+        con.close()
+
+def fetch_object(obj_id, obj_type=None):
+    con = sqlite3.connect(const.DB_NAME)
+    try:
+        cur = con.cursor()
+
+        #try to find the object in the blocks table if the type is block or not specified
+        if obj_type == "block" or not obj_type:
+            cur.execute("SELECT data FROM blocks WHERE id=?", (obj_id,))
+            row = cur.fetchone()
+        #try to find the object in the transactions table if the type is transaction or not specified and the object was not found in the blocks table
+        if obj_type == "transaction" or (not obj_type and not row):
+            cur.execute("SELECT data FROM transactions WHERE id=?", (obj_id,))
+            row = cur.fetchone()
+        # return the object dictionary if it was found
+        if row:
+            return json.loads(row[1])
+        else:
+            return None
+    except Exception as e:
         print(str(e))
     finally:
         con.close()
