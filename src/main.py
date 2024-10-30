@@ -66,8 +66,8 @@ def mk_getpeers_msg():
 
 def mk_peers_msg():
     pl = [f'{peer}' for peer in PEERS]
-    if len(pl) > 30:
-        pl = random.sample(pl, 30)
+    if len(pl) > 29:
+        pl = [f'{LISTEN_CFG["address"]}:{LISTEN_CFG["port"]}'] + random.sample(pl, 29)
     return {"type": "peers", "peers": pl}
 
 def mk_getobject_msg(objid):
