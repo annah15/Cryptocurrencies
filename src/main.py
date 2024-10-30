@@ -287,7 +287,10 @@ def handle_error_msg(msg_dict, peer_self):
 
 
 async def handle_ihaveobject_msg(msg_dict, writer):
-    pass # TODO
+    object_id = msg_dict['object']
+
+    if not object_db.object_exists(object_id):
+        await write_msg(writer, mk_getobject_msg(object_id))
 
 
 async def handle_getobject_msg(msg_dict, writer):

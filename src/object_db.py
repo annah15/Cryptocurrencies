@@ -43,3 +43,20 @@ def create_db():
         print(str(e))
     finally:
         con.close()
+
+def object_exists(objid):
+    con = sqlite3.connect(const.DB_NAME)
+    try:
+        cur = con.cursor()
+        #try to find the object in the blocks table
+        cur.execute("SELECT * FROM blocks WHERE id=?", (objid,))
+        row = cur.fetchone()
+        if not row:
+            #try to find the object in the transactions table
+            cur.execute("SELECT * FROM transactions WHERE id=?", (objid,))
+            row = cur.fetchone()
+        return row is not None
+    except Exception as e:
+        print(str(e))
+    finally:
+        con.close()
