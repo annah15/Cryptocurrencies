@@ -6,6 +6,7 @@ from jcs import canonicalize
 import mempool
 import objects
 import peer_db
+import object_db
 
 import asyncio
 import ipaddress
@@ -561,6 +562,7 @@ async def init():
 
 
 def main():
+    object_db.create_db()
     asyncio.run(init())
 
 
