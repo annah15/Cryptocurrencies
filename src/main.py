@@ -72,13 +72,13 @@ def mk_peers_msg():
     return {"type": "peers", "peers": pl}
 
 def mk_getobject_msg(objid):
-    pass # TODO
+    return {"type": "getobject", "objectid": objid}
 
 def mk_object_msg(obj_dict):
-    pass # TODO
+    return {"type": "object", "object": obj_dict}
 
 def mk_ihaveobject_msg(objid):
-    pass # TODO
+    return {"type": "ihaveobject", "objectid": objid}
 
 def mk_chaintip_msg(blockid):
     pass # TODO
@@ -224,15 +224,18 @@ def validate_error_msg(msg_dict):
 
 # raise an exception if not valid
 def validate_ihaveobject_msg(msg_dict):
-    pass # TODO
+    if sorted(list(msg_dict.keys())) != sorted(['type', 'objectid']):
+        raise ErrorInvalidFormat("Message malformed: ihaveobject message contains invalid keys!")
 
 # raise an exception if not valid
 def validate_getobject_msg(msg_dict):
-    pass # TODO
+    if sorted(list(msg_dict.keys())) != sorted(['type', 'objectid']):
+        raise ErrorInvalidFormat("Message malformed: getobject message contains invalid keys!")
 
 # raise an exception if not valid
 def validate_object_msg(msg_dict):
-    pass # TODO
+    if sorted(list(msg_dict.keys())) != sorted(['type', 'object']):
+        raise ErrorInvalidFormat("Message malformed: object message contains invalid keys!")
 
 # raise an exception if not valid
 def validate_chaintip_msg(msg_dict):
@@ -287,14 +290,14 @@ def handle_error_msg(msg_dict, peer_self):
 
 
 async def handle_ihaveobject_msg(msg_dict, writer):
-    object_id = msg_dict['object']
+    object_id = msg_dict['objectid']
 
     if not object_db.object_exists(object_id):
         await write_msg(writer, mk_getobject_msg(object_id))
 
 
 async def handle_getobject_msg(msg_dict, writer):
-    object_id = msg_dict['object']
+    object_id = msg_dict['objectid']
 
     obj_dict = object_db.fetch_object(object_id)
     # if object exists, send it
@@ -343,14 +346,17 @@ async def del_verify_block_task(task, objid):
 
 # what to do when an object message arrives
 async def handle_object_msg(msg_dict, peer_self, writer):
+    print("Received Object message")
     object_dict = msg_dict['object']
     if not objects.validate_object(object_dict):
         raise ErrorInvalidFormat("Received object is not valid!")
 
+    print('Get object id')
     object_id = objects.get_objid(object_dict)
     if object_db.object_exists(object_id):
         return
     
+    print('Storing object with id {} in db'.format(object_id))
     # store object in db
     object_db.store_object(object_id, object_dict)
 
@@ -381,7 +387,7 @@ async def handle_mempool_msg(msg_dict):
 
 # Helper function
 async def handle_queue_msg(msg_dict, writer):
-    pass # TODO
+    await write_msg(writer, msg_dict)
 
 # how to handle a connection
 async def handle_connection(reader, writer):
