@@ -1,11 +1,11 @@
 from Peer import Peer
+from peer_db import Peers
 import constants as const
 from message.msgexceptions import *
 from jcs import canonicalize
 
 import mempool
 import objects
-import peer_db
 import object_db
 
 import asyncio
@@ -16,7 +16,7 @@ import re
 import sqlite3
 import sys
 
-PEERS = set()
+PEERS = Peers()
 CONNECTIONS = dict()
 BACKGROUND_TASKS = set()
 BLOCK_VERIFY_TASKS = dict()
@@ -35,10 +35,15 @@ def add_peer(peer):
         return
 
     # Do not add loopback or multicast addrs
-    # TODO
+    try:
+        ip = ipaddress.ip_address(peer.host)
 
-    peer_db.store_peer(peer, PEERS)
-    PEERS.add(peer)
+        if ip.is_loopback or ip.is_multicast:
+            return
+    except:
+        pass
+
+    PEERS.addPeer(peer)
 
 # Add connection if not already open
 def add_connection(peer, queue):
@@ -53,7 +58,10 @@ def add_connection(peer, queue):
 # Delete connection
 def del_connection(peer):
     ip, port = peer
-    del CONNECTIONS[Peer(ip, port)]
+    p = Peer(ip, port)
+    del CONNECTIONS[p]
+    PEERS.removePeer(p)
+    PEERS.save()
 
 # Make msg objects
 def mk_error_msg(error_str, error_name):
@@ -66,7 +74,7 @@ def mk_getpeers_msg():
     return {"type": "getpeers"}
 
 def mk_peers_msg():
-    pl = [f'{peer}' for peer in PEERS]
+    pl = [f'{peer}' for peer in PEERS.getPeers()]
     if len(pl) > 29:
         pl = [f'{LISTEN_CFG["address"]}:{LISTEN_CFG["port"]}'] + random.sample(pl, 29)
     return {"type": "peers", "peers": pl}
@@ -220,22 +228,51 @@ def validate_getmempool_msg(msg_dict):
 
 # raise an exception if not valid
 def validate_error_msg(msg_dict):
-    pass # TODO
+    if sorted(list(msg_dict.keys())) != sorted(['type', 'msg', 'name']):
+        raise ErrorInvalidFormat("Message malformed: ihaveobject message contains invalid keys!")
+
+    if msg_dict['type'] != 'error':
+        raise ErrorInvalidFormat("Message type is not 'error'!") # assert: false
+
+    msg = msg_dict['msg']
+    if not isinstance(msg, str):
+        raise ErrorInvalidFormat("Message malformed: msg is not a string!")
+
+    name = msg_dict['name']
+    if not isinstance(name, str):
+        raise ErrorInvalidFormat("Message malformed: name is not a string!")
 
 # raise an exception if not valid
 def validate_ihaveobject_msg(msg_dict):
     if sorted(list(msg_dict.keys())) != sorted(['type', 'objectid']):
         raise ErrorInvalidFormat("Message malformed: ihaveobject message contains invalid keys!")
 
+    objectid = msg_dict['objectid']
+    if not isinstance(objectid, str):
+        raise ErrorInvalidFormat("Message malformed: objectid is not a string!")
+
+    if not objects.validate_objectid(objectid):
+        raise ErrorInvalidFormat("Message malformed: objectid invalid!")
+
 # raise an exception if not valid
 def validate_getobject_msg(msg_dict):
     if sorted(list(msg_dict.keys())) != sorted(['type', 'objectid']):
         raise ErrorInvalidFormat("Message malformed: getobject message contains invalid keys!")
 
+    objectid = msg_dict['objectid']
+    if not isinstance(objectid, str):
+        raise ErrorInvalidFormat("Message malformed: objectid is not a string!")
+
+    if not objects.validate_objectid(objectid):
+        raise ErrorInvalidFormat("Message malformed: objectid invalid!")
+
 # raise an exception if not valid
 def validate_object_msg(msg_dict):
     if sorted(list(msg_dict.keys())) != sorted(['type', 'object']):
         raise ErrorInvalidFormat("Message malformed: object message contains invalid keys!")
+
+    obj = msg_dict['object']
+    objects.validate_object(obj)
 
 # raise an exception if not valid
 def validate_chaintip_msg(msg_dict):
@@ -283,6 +320,7 @@ def handle_peers_msg(msg_dict):
 
         peer = Peer(host_str, port)
         add_peer(peer)
+    PEERS.save()
 
 
 def handle_error_msg(msg_dict, peer_self):
@@ -488,7 +526,6 @@ async def handle_connection(reader, writer):
         except:
             pass
     except FaultyNodeException as e:
-        peer_db.remove_peer(peer)
         print("{}: Detected Faulty Node: {}: {}".format(peer, e.error_name, e.message))
         try:
             await write_msg(writer, mk_error_msg(e.message, e.error_name))
@@ -515,8 +552,8 @@ async def connect_to_node(peer: Peer):
 
         # remove this peer from your known peers, unless this is a bootstrap peer
         if not peer.isBootstrap:
-            peer_db.remove_peer(peer)
-
+            PEERS.removePeer(peer)
+            PEERS.save()
         return
 
     await handle_connection(reader, writer)
@@ -547,7 +584,7 @@ def resupply_connections():
         return
 
     npeers = const.LOW_CONNECTION_THRESHOLD - len(cons)
-    available_peers = PEERS - cons
+    available_peers = PEERS.getPeers() - cons
 
     if len(available_peers) == 0:
         print("Not enough peers available to reconnect.")
@@ -571,7 +608,7 @@ async def init():
     global TX_WAIT_LOCK
     TX_WAIT_LOCK = asyncio.Condition()
 
-    # PEERS.update(peer_db.load_peers())
+    PEERS = Peers()  # this automatically loads the peers from file
 
     bootstrap_task = asyncio.create_task(bootstrap())
     listen_task = asyncio.create_task(listen())

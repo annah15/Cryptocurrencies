@@ -1,36 +1,56 @@
+import os
+import json
 from Peer import Peer
-from typing import Iterable, Set
 
-PEER_DB_FILE = "peers.csv"
+"""
+This stores all peers
+"""
+class Peers:
+    PEER_DB_FILE = "peers.json"
 
+    def __init__(self):
+        self.peers = set()
+        self.isDirty = False # indicates whether state modified since last write
 
-def store_peer(peer: Peer, existing_peers: Iterable[Peer] = None):
-    if existing_peers is None:
-        existing_peers = load_peers()
-    # avoid duplicates
-    if peer in existing_peers:
-        return
+        # load state from file
+        if os.path.isfile(self.PEER_DB_FILE):
+            try:
+                with open(self.PEER_DB_FILE, 'r') as file:
+                    contents = file.read()
+                    dec = json.loads(contents)
 
-    with open(PEER_DB_FILE, 'a') as file:
-        file.write(f"{peer.host_formated},{peer.port}\n")
+                    if not isinstance(dec, list):
+                        raise Exception()
 
-def remove_peer(peer: Peer):
-    existing_peers = load_peers()
-    if not peer in existing_peers:
-        return False
+                    for p in dec:
+                        host, port = p.split(':')
+                        self.peers.add(Peer(host, int(port)))
+            except Exception as e:
+                pass
 
-    with open(PEER_DB_FILE, 'w') as file:
-        for p in existing_peers:
-            if not p == peer:
-                file.write(f"{p.host_formated},{p.port}\n")
+    def addAll(self, peers):
+        for peer in peers:
+            self.addPeer(peer)
 
-def load_peers() -> Set[Peer]:
-    with open(PEER_DB_FILE, 'r') as file:
-        # skip the header
-        peers_str = file.readlines()[1:]
+    def addPeer(self, peer: Peer):
+        if not peer in self.peers:
+            self.peers.add(peer)
+            self.isDirty = True
 
-    result = set()
-    for line in peers_str:
-        host, port = line.split(',')
-        result.add(Peer(host, int(port.strip())))
-    return result
+    def removePeer(self, peer: Peer):
+        if peer in self.peers:
+            self.peers.remove(peer)
+            self.isDirty = True
+
+    # saves the current state to file and clear dirty flag
+    def save(self):
+        if self.isDirty:
+            with open(self.PEER_DB_FILE, 'w') as file:
+                serialized_peer_list = []
+                for peer in self.peers:
+                    serialized_peer_list.append(str(peer))
+                file.write(json.dumps(serialized_peer_list))
+            self.isDirty = False
+
+    def getPeers(self):
+        return self.peers
