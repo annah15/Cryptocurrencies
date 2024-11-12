@@ -26,3 +26,21 @@ class ErrorInvalidHandshake(FaultyNodeException):
         self.message = message
         self.error_name = "INVALID_HANDSHAKE"
         super().__init__(self.message, self.error_name)
+
+class ErrorInvalidTxOutpoint(FaultyNodeException):
+    def __init__(self, message) -> None:
+        self.message = message
+        self.error_name = "INVALID_TX_OUTPOINT"
+        super().__init__(self.message, self.error_name)
+
+class ErrorInvalidTxConservation(FaultyNodeException):
+    def __init__(self, message) -> None:
+        self.message = message
+        self.error_name = "INVALID_TX_CONSERVATION"
+        super().__init__(self.message, self.error_name)
+
+class ErrorInvalidTxSignature(FaultyNodeException):
+    def __init__(self, message) -> None:
+        self.message = message
+        self.error_name = "INVALID_TX_SIGNATURE"
+        super().__init__(self.message, self.error_name)

@@ -6,6 +6,7 @@ from jcs import canonicalize
 import mempool
 import objects
 import peer_db
+import object_db
 
 import asyncio
 import ipaddress
@@ -66,18 +67,18 @@ def mk_getpeers_msg():
 
 def mk_peers_msg():
     pl = [f'{peer}' for peer in PEERS]
-    if len(pl) > 30:
-        pl = random.sample(pl, 30)
+    if len(pl) > 29:
+        pl = [f'{LISTEN_CFG["address"]}:{LISTEN_CFG["port"]}'] + random.sample(pl, 29)
     return {"type": "peers", "peers": pl}
 
 def mk_getobject_msg(objid):
-    pass # TODO
+    return {"type": "getobject", "objectid": objid}
 
 def mk_object_msg(obj_dict):
-    pass # TODO
+    return {"type": "object", "object": obj_dict}
 
 def mk_ihaveobject_msg(objid):
-    pass # TODO
+    return {"type": "ihaveobject", "objectid": objid}
 
 def mk_chaintip_msg(blockid):
     pass # TODO
@@ -152,15 +153,25 @@ def validate_hello_msg(msg_dict):
 
 # returns true iff host_str is a valid hostname
 def validate_hostname(host_str):
-    pass # TODO
+    return re.match(r'^(?=.*[a-zA-Z])[a-zA-Z\d\.\-\_]{3,50}$', host_str) and '.' in host_str[1:-1]
 
 # returns true iff host_str is a valid ipv4 address
 def validate_ipv4addr(host_str):
-    pass # TODO
+    try:
+        ipaddress.IPv4Address(host_str)
+        return True
+    except ipaddress.AddressValueError:
+        return False
 
 # returns true iff peer_str is a valid peer address
 def validate_peer_str(peer_str):
-    pass # TODO
+    try:
+        host, port = peer_str.split(':')
+    except:
+        return False
+    if int(port)<1 or int(port)> 65535:
+        return False
+    return (validate_hostname(host) or validate_ipv4addr(host))
 
 # raise an exception if not valid
 def validate_peers_msg(msg_dict):
@@ -183,7 +194,9 @@ def validate_peers_msg(msg_dict):
                 raise ErrorInvalidFormat(
                     "Message malformed: peer is not a string!")
 
-            validate_peer_str(p)
+            if not validate_peer_str(p):
+                raise ErrorInvalidFormat(
+                    "Message malformed: peer does not have a valid format address:host!")
 
     except ErrorInvalidFormat as e:
         raise e
@@ -211,15 +224,18 @@ def validate_error_msg(msg_dict):
 
 # raise an exception if not valid
 def validate_ihaveobject_msg(msg_dict):
-    pass # TODO
+    if sorted(list(msg_dict.keys())) != sorted(['type', 'objectid']):
+        raise ErrorInvalidFormat("Message malformed: ihaveobject message contains invalid keys!")
 
 # raise an exception if not valid
 def validate_getobject_msg(msg_dict):
-    pass # TODO
+    if sorted(list(msg_dict.keys())) != sorted(['type', 'objectid']):
+        raise ErrorInvalidFormat("Message malformed: getobject message contains invalid keys!")
 
 # raise an exception if not valid
 def validate_object_msg(msg_dict):
-    pass # TODO
+    if sorted(list(msg_dict.keys())) != sorted(['type', 'object']):
+        raise ErrorInvalidFormat("Message malformed: object message contains invalid keys!")
 
 # raise an exception if not valid
 def validate_chaintip_msg(msg_dict):
@@ -274,11 +290,21 @@ def handle_error_msg(msg_dict, peer_self):
 
 
 async def handle_ihaveobject_msg(msg_dict, writer):
-    pass # TODO
+    object_id = msg_dict['objectid']
+
+    if not object_db.object_exists(object_id):
+        await write_msg(writer, mk_getobject_msg(object_id))
 
 
 async def handle_getobject_msg(msg_dict, writer):
-    pass # TODO
+    object_id = msg_dict['objectid']
+
+    obj_dict = object_db.fetch_object(object_id)
+    # if object exists, send it
+    if obj_dict:
+        await write_msg(writer, mk_object_msg(obj_dict))
+    else:
+        await write_msg(writer, mk_error_msg("Object with id {} not found".format(object_id), "OBJECT_NOT_FOUND"))
 
 # return a list of transactions that tx_dict references
 def gather_previous_txs(db_cur, tx_dict):
@@ -320,8 +346,24 @@ async def del_verify_block_task(task, objid):
 
 # what to do when an object message arrives
 async def handle_object_msg(msg_dict, peer_self, writer):
-    pass # TODO
+    print("Received Object message")
+    object_dict = msg_dict['object']
+    if not objects.validate_object(object_dict):
+        raise ErrorInvalidFormat("Received object is not valid!")
 
+    print('Get object id')
+    object_id = objects.get_objid(object_dict)
+    if object_db.object_exists(object_id):
+        return
+    
+    print('Storing object with id {} in db'.format(object_id))
+    # store object in db
+    object_db.store_object(object_id, object_dict)
+
+    # gossip the object to all connected peers
+    for queue in CONNECTIONS.values():
+        await queue.put(mk_ihaveobject_msg(object_id))
+    
 
 # returns the chaintip blockid
 def get_chaintip_blockid():
@@ -345,7 +387,7 @@ async def handle_mempool_msg(msg_dict):
 
 # Helper function
 async def handle_queue_msg(msg_dict, writer):
-    pass # TODO
+    await write_msg(writer, msg_dict)
 
 # how to handle a connection
 async def handle_connection(reader, writer):
@@ -549,6 +591,7 @@ async def init():
 
 
 def main():
+    object_db.create_db()
     asyncio.run(init())
 
 
