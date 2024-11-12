@@ -39,70 +39,80 @@ def validate_target(target_str):
 def validate_transaction_input(in_dict):
     #Check if the input is a dictionary with the correct keys 
     if sorted(list(in_dict.keys())) != sorted(['sig', 'outpoint']):
-        raise ErrorInvalidFormat('Invalid transaction field inputs: {}.'.format(in_dict))
+        raise ErrorInvalidFormat('Invalid transaction input dictionary!')
     
-    #Verify the outpoint
-    if sorted(list(in_dict['outpoint'].keys())) != sorted(['txid', 'index']):
-        raise ErrorInvalidFormat('Invalid transaction field outpoint: {}.'.format(in_dict['outpoint']))
-    if not validate_objectid(in_dict['outpoint']['txid']):
-        raise ErrorInvalidFormat('Invalid transaction outpoint txid: {}.'.format(in_dict['outpoint']['txid']))
-    obj_dict = object_db.fetch_object(in_dict['outpoint']['txid'])
-    # Check if the transaction exists in database
-    if obj_dict is None:
-        raise NonfaultyNodeException('Transaction outpoint not found in database: {}.'.format(in_dict['outpoint']['txid']), "UNKNOWN_OBJECT")
-    if obj_dict["type"] != "transaction":
-        raise ErrorInvalidFormat('Wrong object referenced: {}.'.format(in_dict['outpoint']['txid']))
-    # Verify output with given index exists
-    if not isinstance(in_dict['outpoint']['index'], int):
-        raise ErrorInvalidFormat('Invalid transaction outpoint index: {}.'.format(in_dict['outpoint']['index']))
-    if(in_dict['outpoint']['index'] >= len(obj_dict['outputs'])):
-        raise ErrorInvalidTxOutpoint('Transaction index is out of scope: {}.'.format(in_dict['outpoint']['index']))
+    #Validate the outpoint
+    outpoint = in_dict['outpoint']
+    if sorted(list(outpoint.keys())) != sorted(['txid', 'index']):
+        raise ErrorInvalidFormat('Invalid transaction outpoint dictionary!')
+    if not isinstance(outpoint['txid'], str):
+        raise ErrorInvalidFormat("txid not a string!")
+    if not validate_objectid(outpoint['txid']):
+        raise ErrorInvalidFormat("Invalid txid in outpoint!")
+    if not isinstance(outpoint['index'], int):
+        raise ErrorInvalidFormat('Outpoint index not an int!')
     
-    #Verify the signature
+    #VerValidate the signature
+    if not isinstance(in_dict['sig'], str):
+        raise ErrorInvalidFormat("sig not a string!")
     if not validate_signature(in_dict['sig']):
-        raise ErrorInvalidFormat('Invalid transaction signature format: {}.'.format(in_dict['sig']))
-    return obj_dict
+        raise ErrorInvalidFormat("Invalid signature syntax!")
+    
+    return True
 
 def validate_transaction_output(out_dict):
+    #Check if the output is a dictionary with the correct keys 
     if sorted(list(out_dict.keys())) != sorted(['value', 'pubkey']):
-        raise ErrorInvalidFormat('Invalid transaction output: {}.'.format(out_dict))
+        raise ErrorInvalidFormat('invalid transaction output dictionary.')
+    
+    #Validate the value
     if(not isinstance(out_dict['value'], int) or out_dict['value'] < 0):
-        raise ErrorInvalidFormat('Invalid transaction value: {}.'.format(out_dict['value']))
-    if not validate_pubkey(out_dict['pubkey']):
-        raise ErrorInvalidFormat('Invalid transaction pubkey: {}.'.format(out_dict['pubkey']))
+        raise ErrorInvalidFormat('invalid transaction value.')
+    
+    #Validate the pubkey
+    if not isinstance(out_dict['pubkey'], str) or not validate_pubkey(out_dict['pubkey']):
+        raise ErrorInvalidFormat("invalid transaction pubkey.")
+    
     return True
 
 def validate_transaction(trans_dict):
+    #Check if the transaction is a dictionary with the correct keys 
     if sorted(list(trans_dict.keys())) != sorted(['type', 'inputs', 'outputs']) and sorted(list(trans_dict.keys())) != sorted(['type', 'height', 'outputs']):
         raise ErrorInvalidFormat('Invalid transaction msg: {}.'.format(trans_dict))
+    
     # Validate the outputs
+    if not isinstance(trans_dict['outputs'], list):
+        raise ErrorInvalidFormat("Transaction object invalid: Outputs key not a list")
+    index = 0
     for output in trans_dict['outputs']:
-        validate_transaction_output(output)
+        try:
+            validate_transaction_output(output)
+        except ErrorInvalidFormat as e:
+            raise ErrorInvalidFormat(f"Transaction object invalid: Output at index {index} invalid: {e.message}")
+        index += 1
+
+    #Check for coinbase transaction
     if('height' in trans_dict):
-        if(not isinstance(trans_dict['height'], int) or trans_dict['height'] < 0):
-            raise ErrorInvalidFormat('Transaction key height is invalid: {}.'.format(trans_dict['height']))
+        # Validate height and input of coinbase transaction
+        if not isinstance(trans_dict['height'], int):
+            raise ErrorInvalidFormat("Coinbase transaction object invalid: Height not an integer")
+        if trans_dict['height'] < 0:
+            raise ErrorInvalidFormat("Coinbase transaction object invalid: Negative height")
+        if len(trans_dict['outputs']) > 1:
+            raise ErrorInvalidFormat("Coinbase transaction object invalid: More than one output set")
     else:
-        # Check if the transaction has inputs and validate them
-        input_tx_dicts = []
+        # Validate the inputs of normal transaction
+        if not isinstance(trans_dict['inputs'], list):
+            raise ErrorInvalidFormat("Normal transaction object invalid: Inputs not a list")
         if len(trans_dict['inputs']) == 0:
-            raise ErrorInvalidFormat('Invalid transaction msg (no inputs found).')
+            raise ErrorInvalidFormat(f"Normal transaction object invalid: No input set")
+
         for input in trans_dict['inputs']:
-            input_tx_dict = validate_transaction_input(input)
-            input_tx_dicts.append(input_tx_dict)
-
-        verify_transaction(trans_dict, input_tx_dicts)
-
-        # Check whether the weak law of conservation of value holds
-        sum_of_inputs = 0
-        for i in trans_dict['inputs']:
-            tx_dict = input_tx_dicts.pop(0)
-            sum_of_inputs += tx_dict['outputs'][i['outpoint']['index']]['value']
-
-        sum_of_outputs = 0
-        for o in trans_dict['outputs']:
-            sum_of_outputs += o['value']
-        if(sum_of_inputs < sum_of_outputs):
-            raise ErrorInvalidTxConservation('Sum of outputs is larger than sum of inputs: {}.'.format(trans_dict['inputs']))
+            try:
+                validate_transaction_input(input)
+            except ErrorInvalidFormat as e:
+                raise ErrorInvalidFormat(f"Normal transaction object invalid: Input at index {index} invalid: {e.message}")
+            index += 1
 
     return True
 
@@ -111,6 +121,8 @@ def validate_block(block_dict):
     return True
 
 def validate_object(obj_dict):
+    if not isinstance(obj_dict, dict):
+        raise ErrorInvalidFormat("Object invalid: Not a dictionary!")
     if 'type' not in obj_dict:
         raise ErrorInvalidFormat("Object does not contain key 'type'.")
     
@@ -137,23 +149,61 @@ def verify_tx_signature(tx_dict, sig, pubkey):
     sig_bytes = bytes.fromhex(sig)
     try:
         pubkey.verify(sig_bytes, canonicalize(tx_dict))
+        return True
     except InvalidSignature:
-        raise ErrorInvalidTxSignature('Invalid signature: {}.'.format(sig))
+        return False
 
 
 class TXVerifyException(Exception):
     pass
 
 # Verify the signatures of inputs with the corresponding transaction
-def verify_transaction(tx_dict, input_txs):
-    print("Verifying Transaction")
+def verify_transaction(tx_dict, prev_txs):
+    # coinbase transaction
+    if 'height' in tx_dict:
+        return # assume all syntactically valid coinbase transactions are valid
+
+    input_tx_dict = dict()
     msg = copy.deepcopy(tx_dict)
     # Replace all signatures by none to retrieve the plaintext message
     for i in range(len(msg["inputs"])):
         msg["inputs"][i]['sig']= None
-    # Verify the signature for every input
-    for input, data in zip(tx_dict["inputs"], input_txs):
-        verify_tx_signature(msg, input["sig"], data['outputs'][input['outpoint']['index']]['pubkey'])
+
+    sum_of_inputs = 0
+
+    for input in tx_dict['inputs']:
+        out_id = input['outpoint']['txid']
+        out_idx = input['outpoint']['index']
+
+        if out_idx in input_tx_dict:
+            if out_idx in input_tx_dict[out_id]:
+                raise ErrorInvalidTxConservation(f"The same input ({out_id}, {out_idx}) was used multiple times in this transaction")
+            else:
+                input_tx_dict[out_id].add(out_idx)
+
+        else:
+            input_tx_dict[out_id] = {out_idx}
+
+        
+        # Check if the transaction exists in database
+        if out_id not in prev_txs:
+            raise NonfaultyNodeException('Transaction outpoint not found in database.'.format(out_id), "UNKNOWN_OBJECT")
+
+        prev_tx = prev_txs[out_id]
+        # Verify output with given index exists
+        if(out_idx >= len(prev_tx['outputs'])):
+            raise ErrorInvalidTxOutpoint('Transaction index is out of scope: {}.'.format(out_idx))
+        
+        prev_tx_output = prev_tx['outputs'][out_idx]
+        # Verify the the signature
+        if not verify_tx_signature(msg, input['sig'], prev_tx_output['pubkey']):
+            raise ErrorInvalidTxSignature('Invalid signature: {}.'.format(input['sig']))
+        
+        sum_of_inputs += prev_tx_output['value']
+
+    # Check whether the weak law of conservation of value holds
+    if sum_of_inputs < sum([o['value'] for o in tx_dict['outputs']]):
+        raise ErrorInvalidTxConservation('Sum of outputs is larger than sum of inputs.')
 
 
 

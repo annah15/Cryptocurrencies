@@ -349,8 +349,18 @@ def gather_previous_txs(db_cur, tx_dict):
     # coinbase transaction
     if 'height' in tx_dict:
         return {}
+    
+    #normal transaction
+    prev_txs = {}
+    for input in tx_dict['inputs']:
+        out_id = input['outpoint']['txid']
 
-    pass # TODO
+        obj_dict = object_db.fetch_object(out_id)
+        if obj_dict:
+            if obj_dict["type"] != "transaction":
+                raise ErrorInvalidFormat("Transaction attempts to spend from a block")
+            prev_txs[out_id] = obj_dict
+    return prev_txs
 
 # get the block, the current utxo and block height
 def get_block_utxo_height(blockid):
@@ -384,23 +394,29 @@ async def del_verify_block_task(task, objid):
 
 # what to do when an object message arrives
 async def handle_object_msg(msg_dict, peer_self, writer):
-    print("Received Object message")
-    object_dict = msg_dict['object']
-    if not objects.validate_object(object_dict):
-        raise ErrorInvalidFormat("Received object is not valid!")
-
-    print('Get object id')
-    object_id = objects.get_objid(object_dict)
-    if object_db.object_exists(object_id):
+    obj_dict = msg_dict['object']
+    obj_id = objects.get_objid(obj_dict)
+    print(f"Received object with id {obj_id}: {obj_dict}")
+    
+    if object_db.object_exists(obj_id):
+        # Object does not have to be verified as it is already in the db
         return
     
-    print('Storing object with id {} in db'.format(object_id))
+    #Verify Object
+    obj_type = obj_dict['type']
+    if(obj_type == "transaction"):
+        prev_txs = gather_previous_txs()
+        objects.verify_transaction(obj_dict, prev_txs)
+    elif(obj_type == "block"):
+        objects.validate_block(obj_dict)
+    
+    print('Storing object with id {} in db'.format(obj_id))
     # store object in db
-    object_db.store_object(object_id, object_dict)
+    object_db.store_object(obj_id, obj_dict)
 
     # gossip the object to all connected peers
     for queue in CONNECTIONS.values():
-        await queue.put(mk_ihaveobject_msg(object_id))
+        await queue.put(mk_ihaveobject_msg(obj_id))
     
 
 # returns the chaintip blockid
