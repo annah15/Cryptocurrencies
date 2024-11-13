@@ -21,7 +21,6 @@ PUBKEY_REGEX = re.compile("^[0-9a-f]{64}$")
 def validate_pubkey(pubkey_str):
     return re.match(PUBKEY_REGEX, pubkey_str) is not None
 
-
 SIGNATURE_REGEX = re.compile("^[0-9a-f]{128}$")
 def validate_signature(sig_str):
     return re.match(SIGNATURE_REGEX, sig_str) is not None
@@ -29,7 +28,6 @@ def validate_signature(sig_str):
 NONCE_REGEX = re.compile("^[0-9a-f]{64}$")
 def validate_nonce(nonce_str):
     return re.match(NONCE_REGEX, nonce_str) is not None
-
 
 TARGET_REGEX = re.compile("^[0-9a-f]{64}$")
 def validate_target(target_str):
@@ -75,10 +73,11 @@ def validate_transaction_output(out_dict):
     
     return True
 
+# Syntactic checks
 def validate_transaction(trans_dict):
     #Check if the transaction is a dictionary with the correct keys 
     if sorted(list(trans_dict.keys())) != sorted(['type', 'inputs', 'outputs']) and sorted(list(trans_dict.keys())) != sorted(['type', 'height', 'outputs']):
-        raise ErrorInvalidFormat('Invalid transaction msg: {}.'.format(trans_dict))
+        raise ErrorInvalidFormat('Invalid transaction keys: {}.'.format(trans_dict))
     
     # Validate the outputs
     if not isinstance(trans_dict['outputs'], list):
@@ -116,8 +115,57 @@ def validate_transaction(trans_dict):
 
     return True
 
+# Syntactic checks
 def validate_block(block_dict):
-    # todo
+    #Check if the block is a dictionary with the correct keys 
+    required_keys = {'type', 'txids', 'nonce', 'previd', 'created', 'T'}
+    optional_combinations = [
+    set(),  # No optional keys
+    {'miner'},{'note'},{'miner', 'note'}]
+
+    if not any(set(block_dict.keys()) == required_keys | optional for optional in optional_combinations):
+        raise ErrorInvalidFormat(f'Invalid block keys: {block_dict.keys()}.')
+
+    #Validate the transaction identifiers
+    if not isinstance(block_dict['txids'], list):
+        raise ErrorInvalidFormat("Block object invalid: txids is not a list.")
+    index = 0
+    for txid in block_dict['txids']:
+        if not validate_objectid(txid):
+            raise ErrorInvalidFormat("Block object invalid: Transaction id at index {} is not a valid object id: {}".format(index, txid))
+        index += 1
+    
+    #Validate the nonce
+    if not validate_nonce(block_dict['nonce']):
+        raise ErrorInvalidFormat("Block object invalid: Incorrect nonce format.")
+    
+    #Validate the object identifier to the prev block (it can be 0 or a valid object id)
+    if block_dict["previd"] != 0 and not validate_objectid(block_dict["previd"]):
+        raise ErrorInvalidFormat("Block object invalid: previd is not a correct object id.")
+
+    #Validate the creation timestamp
+    if not isinstance(block_dict['created'], int):
+        raise ErrorInvalidFormat("Block object invalid: Creation timestamp not an integer.")
+    
+    #Validate the target
+    if not validate_target(block_dict['T']):
+        raise ErrorInvalidFormat("Block object invalid: Incorrect target format.")
+    if(block_dict['T'] != "00000000abc00000000000000000000000000000000000000000000000000000"):
+        raise ErrorInvalidFormat('Block object invalid: Incorrect target value {}.'.format(block_dict))
+    
+    #Validate miner if exists
+    if(block_dict['miner'] and ((not block_dict['miner'].isprintable()) or (len(block_dict['miner']) > 128))):
+        raise ErrorInvalidFormat('Block object invalid: miner is of incorrect format.')
+    
+    #Validate note if exists
+    if(block_dict['note'] and ((not block_dict['note'].isprintable()) or (len(block_dict['note']) > 128))):
+        raise ErrorInvalidFormat('Block object invalid: note is of incorrect format.')
+    
+    #Validate Poof of Work
+    block_id = get_objid(block_dict)
+    if (block_id <= block_dict['T']):
+        raise ErrorInvalidBlockPow("Block object invalid: Required minig target is not met.")
+
     return True
 
 def validate_object(obj_dict):

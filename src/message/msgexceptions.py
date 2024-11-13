@@ -44,3 +44,9 @@ class ErrorInvalidTxSignature(FaultyNodeException):
         self.message = message
         self.error_name = "INVALID_TX_SIGNATURE"
         super().__init__(self.message, self.error_name)
+
+class ErrorInvalidBlockPow(FaultyNodeException):
+    def __init__(self, message) -> None:
+        self.message = message
+        self.error_name = "INVALID_BLOCK_POW"
+        super().__init__(self.message, self.error_name)
