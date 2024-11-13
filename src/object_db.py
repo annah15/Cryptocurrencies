@@ -1,5 +1,7 @@
 import sqlite3
 
+from message.msgexceptions import * 
+
 import objects
 import constants as const
 import os
@@ -19,22 +21,18 @@ def create_db():
         # Create table
         cur.execute('''CREATE TABLE IF NOT EXISTS blocks
                      (id TEXT PRIMARY KEY,
-                      data TEXT)''')
+                      data TEXT,
+                      utxo TEXT,
+                      height INTEGER NOT NULL)''')
         
         cur.execute('''CREATE TABLE IF NOT EXISTS transactions
                         (id TEXT PRIMARY KEY,
                          data TEXT)''')
         
-        cur.execute('''CREATE TABLE IF NOT EXISTS block_transactions
-                        (blockid TEXT,
-                        txid TEXT,
-                        FOREIGN KEY(blockid) REFERENCES blocks(id),
-                        FOREIGN KEY(txid) REFERENCES transactions(id))''')          
-
         # Preload genesis block
         genesis_block = canonicalize(const.GENESIS_BLOCK)
-        genesis_block_row = (const.GENESIS_BLOCK_ID, genesis_block)
-        cur.execute("INSERT INTO blocks VALUES (?,?)", genesis_block_row)
+        genesis_block_row = (const.GENESIS_BLOCK_ID, genesis_block, None, 0)
+        cur.execute("INSERT INTO blocks VALUES (?,?,?,?)", genesis_block_row)
 
         # Save (commit) the changes
         con.commit()
@@ -62,14 +60,19 @@ def object_exists(objid):
     finally:
         con.close()
 
-def store_object(obj_id, obj_dict):
+def store_object(obj_id, obj_dict, utxo_set=None, height=None):
     con = sqlite3.connect(const.DB_NAME)
     try:
         cur = con.cursor()
-        if obj_dict["type"] == "block":
-            cur.execute("INSERT INTO blocks VALUES (?,?)", (obj_id, canonicalize(obj_dict)))
-        else:
+        if obj_dict["type"] == "transaction":
             cur.execute("INSERT INTO transactions VALUES (?,?)", (obj_id, canonicalize(obj_dict)))
+        elif obj_dict["type"] == "block" and height:
+            cur.execute("INSERT INTO blocks VALUES (?,?,?,?)", (obj_id, canonicalize(obj_dict), canonicalize(utxo_set), height))
+        else: 
+            if height is None:
+                raise Exception("Height is not defined") # logic error
+            else:
+                raise Exception("Unknown object type: " + obj_dict["type"]) #assert: false
         con.commit()
         print("Object stored successfully!")
     except Exception as e:
@@ -78,7 +81,7 @@ def store_object(obj_id, obj_dict):
     finally:
         con.close()
 
-def fetch_object(obj_id, obj_type=None):
+def fetch_object_data(obj_id, obj_type=None):
     con = sqlite3.connect(const.DB_NAME)
     try:
         cur = con.cursor()
@@ -98,6 +101,28 @@ def fetch_object(obj_id, obj_type=None):
             return json.loads(data[0])
         else:
             return None
+    except Exception as e:
+        print(str(e))
+    finally:
+        con.close()
+
+def fetch_block(block_id):
+    con = sqlite3.connect(const.DB_NAME)
+    try:
+        cur = con.cursor()
+        #try to find the object in the blocks table if the type is block or not specified
+        cur.execute("SELECT * FROM blocks WHERE id=?", (block_id,))
+        data = cur.fetchone()
+        # return the object dictionary if it was found
+        if data:
+            if data[1]['type'] != 'block':
+                raise ErrorInvalidFormat("Object id {} references transaction instead of block".format(block_id))
+            #If utxo set exists, deserialize it
+            if data[2]:
+                data[2] = json.loads(data[2])
+            return data[1:] # Returns: (block_data, utxo_set, height)
+        else:
+            return None, None, None
     except Exception as e:
         print(str(e))
     finally:
