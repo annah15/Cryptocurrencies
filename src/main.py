@@ -15,6 +15,7 @@ import random
 import re
 import sqlite3
 import sys
+import time
 
 PEERS = Peers()
 CONNECTIONS = dict()
@@ -27,6 +28,7 @@ LISTEN_CFG = {
         "address": const.ADDRESS,
         "port": const.PORT
 }
+PENDING = dict()
 
 # Add peer to your list of peers
 def add_peer(peer):
@@ -337,7 +339,7 @@ async def handle_ihaveobject_msg(msg_dict, writer):
 async def handle_getobject_msg(msg_dict, writer):
     object_id = msg_dict['objectid']
 
-    obj_dict = object_db.fetch_object(object_id)
+    obj_dict = object_db.fetch_object_data(object_id)
     # if object exists, send it
     if obj_dict:
         await write_msg(writer, mk_object_msg(obj_dict))
@@ -355,42 +357,99 @@ def gather_previous_txs(db_cur, tx_dict):
     for input in tx_dict['inputs']:
         out_id = input['outpoint']['txid']
 
-        obj_dict = object_db.fetch_object(out_id)
+        obj_dict = object_db.fetch_object_data(out_id)
         if obj_dict:
             if obj_dict["type"] != "transaction":
                 raise ErrorInvalidFormat("Transaction attempts to spend from a block")
             prev_txs[out_id] = obj_dict
     return prev_txs
 
-# get the block, the current utxo and block height
-def get_block_utxo_height(blockid):
-    # TODO
-    block = ''
-    utxo = ''
-    height = ''
-    return (block, utxo, height)
-
 # get all transactions as a dict txid -> tx from a list of ids
-def get_block_txs(txids):
-    pass # TODO
+def get_block_txs(txids) -> dict:
+    block_txs = {}
+    for txid in txids:
+        obj_dict = object_db.fetch_object_data(txid)
+        if obj_dict:
+            if obj_dict["type"] != "transaction":
+                raise ErrorInvalidFormat("Block attempts to reference a block instead of transaction")
+            block_txs[txid] = obj_dict
+    return block_txs
 
 
-# Stores for a block its utxoset and height
+# Stores a block its with its utxoset and height
 def store_block_utxo_height(block, utxo, height: int):
     pass # TODO
 
+#Notify every pending object, that a new valid/invalif object has arrived
+def notify_pending(txid, valid):
+    for block_id, block in PENDING:
+        #actions have to be taken, only if object is actually referenced
+        if txid in block['missing_txs']:
+            # if received object is invalid, inform the pending object and remove it from pending (its invalid as well)
+            if not valid:
+                block['queue'].put_nowait({
+                                'type' : 'invalidTransaction', #special message to tell the thread to abort validation
+                            })
+                del PENDING[block_id]
+                continue
+            block['missing_txs'].remove(txid)
+            # if no more missing transaction, the block verification can resume, delete block from pending
+            if len(block['missing_txs']) == 0:
+                block['queue'].put_nowait({
+                                'type' : 'resumeValidation', #special message to tell the thread to resume validation
+                                'block_id' : block_id,
+                                'block_dict' : block['object'],
+                                'queue' : block['queue']
+                            })
+                del PENDING[block_id]
+
+async def timeout_pending(obj_id):
+    # suspend for a time limit in seconds
+    await asyncio.sleep(5)
+    # execute the other coroutine
+    print('Timeout triggered')
+    if PENDING[obj_id]['timeout'] < time.time():
+        PENDING[obj_id]['queue'].put_nowait({
+                                'type' : 'pendingTimeout', #special message to tell the thread to abort validation
+                            })
+        del PENDING[obj_id]
+        
+
 # runs a task to verify a block
 # raises blockverifyexception
-async def verify_block_task(block_dict):
-    pass # TODO
+async def verify_block_task(block_id, block_dict, queue):
+    #get transactions referenced in the block
+    block_txs = get_block_txs(block_dict['txids'])
+    missing_txs = set(block_dict['txids']) - set(block_txs.keys())
 
-# adds a block verify task to queue and starting it
-def add_verify_block_task(objid, block, queue):
-    pass # TODO
+    if len(missing_txs) > 0:
+        for q in CONNECTIONS.values():
+            for missing_tx in missing_txs:
+                await q.put(mk_getobject_msg(missing_tx))
 
-# abort a block verify task
-async def del_verify_block_task(task, objid):
-    pass # TODO
+        PENDING[block_id]= {
+            'object' : block_dict,
+            'queue' : queue,
+            'missing_txs' : missing_txs,
+            'timeout' : time.time() + 5
+        }
+        asyncio.create_task(timeout_pending(block_id))
+
+    # every referenced transaction is found
+    else: 
+        # previous block not found and current block is not genesis
+        prev_block , prev_utxo, prev_height  = object_db.fetch_block(block_dict['previd']) if block_dict['previd'] is not None else None, None, 0
+        if prev_block is None:
+            if block_id != const.GENESIS_BLOCK_ID:
+                raise ErrorInvalidGenesis("Block does not contain link to previous or is fake genesis block!")
+                #for now assume blocks arrive in correct order, otherwise send unknown objec error
+            raise ErrorUnknownObject('Block id {} not found in database.'.format(block_dict['previd']))
+        if prev_block['type'] != 'block':
+            raise ErrorInvalidFormat("Previous block is not a block!")
+        if prev_height is None:
+            raise ErrorUnknownObject("No height for previous block found!") # assert: false 
+            
+        return objects.verify_block(block_dict, prev_block, prev_utxo, prev_height, block_txs)
 
 # what to do when an object message arrives
 async def handle_object_msg(msg_dict, peer_self, writer):
@@ -406,13 +465,24 @@ async def handle_object_msg(msg_dict, peer_self, writer):
     obj_type = obj_dict['type']
     if(obj_type == "transaction"):
         prev_txs = gather_previous_txs()
-        objects.verify_transaction(obj_dict, prev_txs)
+        try:
+            objects.verify_transaction(obj_dict, prev_txs)
+        except Exception as e:
+            notify_pending(obj_id, False)
+            raise e
+        notify_pending(obj_id, True)
+        # store transaction in db
+        print('Storing transaction with id {} in db'.format(obj_id))
+        object_db.store_object(obj_id, obj_dict)
+
     elif(obj_type == "block"):
-        objects.validate_block(obj_dict)
+        utxo_set, height = verify_block_task(obj_id, obj_dict, CONNECTIONS[peer_self])
+        # store block in db
+        print('Storing block with id {} in db'.format(obj_id))
+        object_db.store_object(obj_id, obj_dict, utxo_set, height)
     
-    print('Storing object with id {} in db'.format(obj_id))
-    # store object in db
-    object_db.store_object(obj_id, obj_dict)
+    else:
+        raise ErrorInvalidFormat("Object type not valid!") #assert false
 
     # gossip the object to all connected peers
     for queue in CONNECTIONS.values():
@@ -441,6 +511,12 @@ async def handle_mempool_msg(msg_dict):
 
 # Helper function
 async def handle_queue_msg(msg_dict, writer):
+    if msg_dict["type"] == "invalidTransaction":
+        raise ErrorInvalidAncestry("Block references an invalid Transaction.")
+    if msg_dict["type"] == "pendingTimeout":
+        raise ErrorUnknownObject('Referenced Object not found in database.')
+    if msg_dict["type"] == "resumeValidation":
+        verify_block_task(msg_dict["block_id"], msg_dict["block_dict"], msg_dict["queue"])
     await write_msg(writer, msg_dict)
 
 # how to handle a connection

@@ -31,7 +31,8 @@ GENESIS_BLOCK = {
 
 BANNED_HOSTS = [
 ]
-
+INVALID_TXS = [
+]
 PRELOADED_PEERS = {
     Peer("128.130.122.101", 18018), # lecturers node
 }
