@@ -29,9 +29,10 @@ NONCE_REGEX = re.compile("^[0-9a-f]{64}$")
 def validate_nonce(nonce_str):
     return re.match(NONCE_REGEX, nonce_str) is not None
 
-TARGET_REGEX = re.compile("^[0-9a-f]{64}$")
 def validate_target(target_str):
-    return re.match(TARGET_REGEX, target_str) is not None
+    if not isinstance(target_str, str):
+        return False
+    return const.BLOCK_TARGET == target_str
 
 
 def validate_transaction_input(in_dict):
@@ -117,6 +118,7 @@ def validate_transaction(trans_dict):
 
 # Syntactic checks
 def validate_block(block_dict):
+    print("Valitdating Block")
     if not isinstance(block_dict, dict):
         raise ErrorInvalidFormat("Block object invalid: Not a dictionary!")
     #Check if the block is a dictionary with the correct keys 
@@ -138,12 +140,14 @@ def validate_block(block_dict):
         raise ErrorInvalidFormat("Block object invalid: Incorrect nonce format.")
     
     #Validate the object identifier to the prev block (it can be 0 or a valid object id)
-    if block_dict["previd"] == None and get_objid(block_dict) != const.GENESIS_BLOCK_ID:
-        raise ErrorInvalidFormat("Block object invalid: previd is null but block i not genesis.")
-    elif not isinstance(block_dict['previd'], str): 
-        raise ErrorInvalidFormat("Block object invalid: previd is not a string.")
-    elif not validate_objectid(block_dict["previd"]):
-        raise ErrorInvalidFormat("Block object invalid: previd is not a correct object id.")
+    if block_dict["previd"] == None :
+        if get_objid(block_dict) != const.GENESIS_BLOCK_ID:
+            raise ErrorInvalidFormat("Block object invalid: previd is null but block i not genesis.")
+    else :
+        if not isinstance(block_dict['previd'], str): 
+            raise ErrorInvalidFormat("Block object invalid: previd is not a string.")
+        if not validate_objectid(block_dict["previd"]):
+            raise ErrorInvalidFormat("Block object invalid: previd is not a correct object id.")
 
     #Validate the creation timestamp
     if not isinstance(block_dict['created'], int):
@@ -155,7 +159,6 @@ def validate_block(block_dict):
     except Exception:
         raise ErrorInvalidFormat("Block object invalid: created timestamp could not be parsed!")
 
-    
     #Validate the target
     if not isinstance(block_dict['T'], str):
         raise ErrorInvalidFormat("Block object invalid: T not a string!")
@@ -263,10 +266,11 @@ def verify_transaction(tx_dict, prev_txs):
 # apply tx to utxo
 # returns mining fee
 def update_utxo_and_calculate_fee(tx, txid, utxo):
+    print("Update UTXO")
     invalue = 0
     for input_tx in tx['inputs']:
-        input_tx_id = input_tx['outpoint']['txis']
-        input_tx_idx = input_tx['outpoint']['index']
+        input_tx_id = input_tx['outpoint']['txid']
+        input_tx_idx = str(input_tx['outpoint']['index'])
         
         # For each input, check if it is in the UTXO set and remove it
         if input_tx_id not in utxo :
@@ -283,19 +287,21 @@ def update_utxo_and_calculate_fee(tx, txid, utxo):
             del utxo[input_tx_id]
 
         #Add transaction outputs to utxo
-        outvalue = 0
-        for idx, output in enumerate(tx['outputs']):
-            utxo[txid].update({idx: output['value']})
-            outvalue += output['value']
+    outvalue = 0
+    for idx, output in enumerate(tx['outputs']):
+        if txid not in utxo:
+            utxo[txid] = {}
+        utxo[txid].update({str(idx): output['value']})
+        outvalue += output['value']
         
-        if outvalue > invalue:
-            raise ErrorInvalidTxOutpoint("Outputs for Transaction {} exceed inputs!".format(txid))
+    if outvalue > invalue:
+        raise ErrorInvalidTxOutpoint("Outputs for Transaction {} exceed inputs!".format(txid))
 
     return invalue - outvalue
 
 # verify that a block is valid in the current chain state, using known transactions txs
 def verify_block(block, prev_block, prev_utxo, prev_height, txs):
-
+    print("Actual Verification")
     # check block timestamp
     prev_created_ts = prev_block['created']
     if prev_created_ts >= block['created']:
@@ -319,6 +325,8 @@ def verify_block(block, prev_block, prev_utxo, prev_height, txs):
         # The height of a coinbase transaction does not match the height of the block that references it
         if coinbase_tx['height'] != height:
             raise ErrorInvalidBlockCoinbase("Coinbase transaction does not have the correct height. Block height is {}, coinbase height is {}.".format(height, coinbase_tx['height']))
+        # add coinbase TX output to UTXO
+        utxo[coinbase_txid] = { '0' : coinbase_tx['outputs'][0]['value'] }
 
     tx_fees = 0
     for txid in block["txids"][1:] if first_coinbase else block["txids"]:
@@ -332,7 +340,9 @@ def verify_block(block, prev_block, prev_utxo, prev_height, txs):
         if any(input['outpoint']['txid'] == coinbase_txid for input in tx['inputs']):
             raise ErrorInvalidTxOutpoint("Transaction {} spends from the coinbase transaction of the same block.".format(tx))
 
+        print("UTXO before: {}".format(utxo))
         tx_fees += update_utxo_and_calculate_fee(tx, txid, utxo)
+        print("UTXO after: {}".format(utxo))
 
     # check coinbase output value
     if coinbase_tx is not None:

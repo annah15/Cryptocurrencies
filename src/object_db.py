@@ -115,14 +115,14 @@ def fetch_block(block_id):
         data = cur.fetchone()
         # return the object dictionary if it was found
         if data:
-            if data[1]['type'] != 'block':
+            block_data = json.loads(data[1])
+            if block_data['type'] != 'block':
                 raise ErrorInvalidFormat("Object id {} references transaction instead of block".format(block_id))
             #If utxo set exists, deserialize it
-            if data[2]:
-                data[2] = json.loads(data[2])
-            return data[1:] # Returns: (block_data, utxo_set, height)
+            utxo_set = json.loads(data[2]) if data[2] else None
+            return block_data, utxo_set, data[3] # Returns: (block_data, utxo_set, height)
         else:
-            return None, None, None
+            return None, None, 0
     except Exception as e:
         print(str(e))
     finally:

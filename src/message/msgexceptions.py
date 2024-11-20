@@ -80,3 +80,7 @@ class ErrorUnknownObject(NonfaultyNodeException):
         self.message = message
         self.error_name = "UNKNOWN_OBJECT"
         super().__init__(self.message, self.error_name)
+
+class MissingObjects(NonfaultyNodeException):
+    def __init__(self) -> None:
+        self.error_name = "MISSING_OBJECT"
