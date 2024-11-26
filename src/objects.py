@@ -340,9 +340,7 @@ def verify_block(block, prev_block, prev_utxo, prev_height, txs):
         if any(input['outpoint']['txid'] == coinbase_txid for input in tx['inputs']):
             raise ErrorInvalidTxOutpoint("Transaction {} spends from the coinbase transaction of the same block.".format(tx))
 
-        print("UTXO before: {}".format(utxo))
         tx_fees += update_utxo_and_calculate_fee(tx, txid, utxo)
-        print("UTXO after: {}".format(utxo))
 
     # check coinbase output value
     if coinbase_tx is not None:

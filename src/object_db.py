@@ -88,12 +88,10 @@ def fetch_object_data(obj_id, obj_type=None):
 
         #try to find the object in the blocks table if the type is block or not specified
         if obj_type == "block" or not obj_type:
-            print("Search in blocks.")
             cur.execute("SELECT data FROM blocks WHERE id=?", (obj_id,))
             data = cur.fetchone()
         #try to find the object in the transactions table if the type is transaction or not specified and the object was not found in the blocks table
         if obj_type == "transaction" or (not obj_type and not data):
-            print("Search in transactions")
             cur.execute("SELECT data FROM transactions WHERE id=?", (obj_id,))
             data = cur.fetchone()
         # return the object dictionary if it was found

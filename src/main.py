@@ -404,7 +404,7 @@ def notify_pending(txid, valid):
 
 async def timeout_pending():
     # suspend for a time limit in seconds
-    await asyncio.sleep(20)
+    await asyncio.sleep(10)
     # execute the other coroutine
     print('Timeout triggered')
     for obj_id in PENDING.copy().keys():
@@ -435,7 +435,7 @@ async def verify_block_task(block_id, block_dict, queue):
             'object' : block_dict,
             'queue' : queue,
             'missing_txs' : missing_txs,
-            'timeout' : time.time() + 20
+            'timeout' : time.time() + 10
         }
         asyncio.create_task(timeout_pending())
         
@@ -445,7 +445,6 @@ async def verify_block_task(block_id, block_dict, queue):
     else: 
         # previous block not found and current block is not genesis
         prev_block , prev_utxo, prev_height  = object_db.fetch_block(block_dict['previd']) if block_dict['previd'] is not None else (None, None, 0)
-        print("PREv: {}, {}, {}". format(prev_block , prev_utxo, prev_height))
         if prev_block is None:
             if block_id != const.GENESIS_BLOCK_ID:
                 raise ErrorInvalidGenesis("Block does not contain link to previous or is fake genesis block!")
@@ -525,12 +524,13 @@ async def handle_mempool_msg(msg_dict):
 async def handle_queue_msg(msg_dict, writer, peer_self):
     if msg_dict["type"] == "invalidTransaction":
         raise ErrorInvalidAncestry("Block references an invalid Transaction.")
-    if msg_dict["type"] == "pendingTimeout":
+    elif msg_dict["type"] == "pendingTimeout":
         raise ErrorUnknownObject('Referenced Object not found in database.')
-    if msg_dict["type"] == "resumeValidation":
+    elif msg_dict["type"] == "resumeValidation":
         print("Resuming Validation")
         await handle_object_msg(msg_dict, peer_self, writer)
-    await write_msg(writer, msg_dict)
+    else:
+        await write_msg(writer, msg_dict)
 
 # how to handle a connection
 async def handle_connection(reader, writer):
