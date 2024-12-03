@@ -29,6 +29,8 @@ LISTEN_CFG = {
         "port": const.PORT
 }
 PENDING = dict()
+CHAINTIP = const.GENESIS_BLOCK_ID
+CHAINTIP_HEIGHT = 0
 
 # Add peer to your list of peers
 def add_peer(peer):
@@ -91,7 +93,7 @@ def mk_ihaveobject_msg(objid):
     return {"type": "ihaveobject", "objectid": objid}
 
 def mk_chaintip_msg(blockid):
-    pass # TODO
+    return {"type": "getchaintip"}
 
 def mk_mempool_msg(txids):
     pass # TODO
@@ -385,7 +387,7 @@ def notify_pending(txid, valid):
     print("Notify Pending")
     for block_id, block in PENDING.copy().items():
         #actions have to be taken, only if object is actually referenced
-        if txid in block['missing_txs']:
+        if txid in block['missing_objs']:
             # if received object is invalid, inform the pending object and remove it from pending (its invalid as well)
             if not valid:
                 block['queue'].put_nowait({
@@ -393,9 +395,9 @@ def notify_pending(txid, valid):
                             })
                 del PENDING[block_id]
                 continue
-            block['missing_txs'].remove(txid)
+            block['missing_objs'].remove(txid)
             # if no more missing transaction, the block verification can resume, delete block from pending
-            if len(block['missing_txs']) == 0:
+            if len(block['missing_objs']) == 0:
                 block['queue'].put_nowait({
                                 'type' : 'resumeValidation', #special message to tell the thread to resume validation
                                 'object' : block['object']
@@ -421,44 +423,72 @@ async def verify_block_task(block_id, block_dict, queue):
     print("Verifying Block task")
     #get transactions referenced in the block
     block_txs = get_block_txs(block_dict['txids'])
-    missing_txs = set(block_dict['txids']) - set(block_txs.keys())
+    missing_objs = set(block_dict['txids']) - set(block_txs.keys())
+    # get previous block referenced
+    prev_block, prev_utxo, prev_height  = object_db.fetch_block(block_dict['previd']) if block_dict['previd'] is not None else (None, None, 0)
+    # previous block not found and current block is not genesis
+    if prev_block is None:
+        missing_objs.add(block_dict["previd"])
+
+    print("Missing objects: {}".format(missing_objs))
+
+    # if there are referenced objects not found in the database
+    if len(missing_objs) > 0:
+        for q in CONNECTIONS.values():
+            for missing_obj in missing_objs:
+                print("Get object message")
+                await q.put(mk_getobject_msg(missing_obj))
+
+        PENDING[block_id]= {
+            'object' : block_dict,
+            'queue' : queue,
+            'missing_objs' : missing_objs,
+            'timeout' : time.time() + 10
+        }
+        asyncio.create_task(timeout_pending())
+        
+        raise MissingObjects
+  
+    # every referenced object is found
+    if prev_block['type'] != 'block':
+        raise ErrorInvalidFormat("Previous block is not a block!")
+    if prev_height is None:
+        raise ErrorUnknownObject("No height for previous block found!") # assert: false 
+            
+    return objects.verify_block(block_dict, prev_block, prev_utxo, prev_height, block_txs)
+
+
+async def verify_tx_task(tx_id, tx_dict, queue):
+    print("Verifying Transaction task")
+    #get transactions referenced in the block
+    prev_txs = gather_previous_txs(tx_dict)
+    missing_txs = set(tx_dict['inputs']['ountpoint']['txids']) - set(prev_txs.keys())
 
     print("Missing transactions: {}".format(missing_txs))
 
+    # if there are referenced objects not found in the database
     if len(missing_txs) > 0:
         for q in CONNECTIONS.values():
             for missing_tx in missing_txs:
                 print("Get object message")
                 await q.put(mk_getobject_msg(missing_tx))
 
-        PENDING[block_id]= {
-            'object' : block_dict,
+        PENDING[tx_id]= {
+            'object' : tx_dict,
             'queue' : queue,
-            'missing_txs' : missing_txs,
+            'missing_objs' : missing_txs,
             'timeout' : time.time() + 10
         }
         asyncio.create_task(timeout_pending())
         
         raise MissingObjects
-
-    # every referenced transaction is found
-    else: 
-        # previous block not found and current block is not genesis
-        prev_block , prev_utxo, prev_height  = object_db.fetch_block(block_dict['previd']) if block_dict['previd'] is not None else (None, None, 0)
-        if prev_block is None:
-            if block_id != const.GENESIS_BLOCK_ID:
-                raise ErrorInvalidGenesis("Block does not contain link to previous or is fake genesis block!")
-                #for now assume blocks arrive in correct order, otherwise send unknown objec error
-            raise ErrorUnknownObject('Block id {} not found in database.'.format(block_dict['previd']))
-        if prev_block['type'] != 'block':
-            raise ErrorInvalidFormat("Previous block is not a block!")
-        if prev_height is None:
-            raise ErrorUnknownObject("No height for previous block found!") # assert: false 
-            
-        return objects.verify_block(block_dict, prev_block, prev_utxo, prev_height, block_txs)
+ 
+    objects.verify_transaction(tx_dict, prev_txs)
 
 # what to do when an object message arrives
 async def handle_object_msg(msg_dict, peer_self, writer):
+    global CHAINTIP
+    global CHAINTIP_HEIGHT
     obj_dict = msg_dict['object']
     obj_id = objects.get_objid(obj_dict)
     print(f"Received object with id {obj_id}: {obj_dict}")
@@ -467,33 +497,34 @@ async def handle_object_msg(msg_dict, peer_self, writer):
         # Object does not have to be verified as it is already in the db
         return
     
-    #Verify Object
-    obj_type = obj_dict['type']
-    if(obj_type == "transaction"):
-        prev_txs = gather_previous_txs(obj_dict)
-        try:
-            objects.verify_transaction(obj_dict, prev_txs)
-        except Exception as e:
-            notify_pending(obj_id, False)
-            raise e
-        notify_pending(obj_id, True)
-        # store transaction in db
-        print('Storing transaction with id {} in db'.format(obj_id))
-        object_db.store_object(obj_id, obj_dict)
-
-    elif(obj_type == "block"):
-        ip, port = peer_self
-        peer_self = Peer(ip, port)
-        try:
-            utxo_set, height = await verify_block_task(obj_id, obj_dict, CONNECTIONS[peer_self])
-        except MissingObjects:
-            return
-        # store block in db
-        print('Storing block with id {} in db'.format(obj_id))
-        object_db.store_object(obj_id, obj_dict, utxo_set, height)
+    if obj_id in PENDING:
+        # No need to validate pending object
+        return
     
-    else:
-        raise ErrorInvalidFormat("Object type not valid!") #assert false
+    #Verify Object
+    try:
+        obj_type = obj_dict['type']
+        if(obj_type == "transaction"):
+            await verify_tx_task(obj_id, obj_dict, CONNECTIONS[peer_self])
+            # store transaction in db
+            print('Storing transaction with id {} in db'.format(obj_id))
+            object_db.store_object(obj_id, obj_dict)
+        elif(obj_type == "block"):
+            ip, port = peer_self
+            peer_self = Peer(ip, port)
+            utxo_set, height = await verify_block_task(obj_id, obj_dict, CONNECTIONS[peer_self])
+            # store block in db
+            print('Storing block with id {} in db'.format(obj_id))
+            object_db.store_object(obj_id, obj_dict, utxo_set, height)
+            if height > CHAINTIP_HEIGHT:
+                CHAINTIP_HEIGHT = height
+                CHAINTIP = obj_id
+    except MissingObjects:
+            return
+    except Exception as e:
+        notify_pending(obj_id, False)
+        raise e
+    notify_pending(obj_id, True)
 
     # gossip the object to all connected peers
     for queue in CONNECTIONS.values():
