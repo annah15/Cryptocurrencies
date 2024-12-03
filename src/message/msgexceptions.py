@@ -44,3 +44,43 @@ class ErrorInvalidTxSignature(FaultyNodeException):
         self.message = message
         self.error_name = "INVALID_TX_SIGNATURE"
         super().__init__(self.message, self.error_name)
+
+class ErrorInvalidBlockPow(FaultyNodeException):
+    def __init__(self, message) -> None:
+        self.message = message
+        self.error_name = "INVALID_BLOCK_POW"
+        super().__init__(self.message, self.error_name)
+
+class ErrorInvalidBlockCoinbase(FaultyNodeException):
+    def __init__(self, message) -> None:
+        self.message = message
+        self.error_name = "INVALID_BLOCK_COINBASE"
+        super().__init__(self.message, self.error_name)
+
+class ErrorInvalidBlockTimestamp(FaultyNodeException):
+    def __init__(self, message) -> None:
+        self.message = message
+        self.error_name = "INVALID_BLOCK_TIMESTAMP"
+        super().__init__(self.message, self.error_name)
+
+class ErrorInvalidAncestry(FaultyNodeException):
+    def __init__(self, message) -> None:
+        self.message = message
+        self.error_name = "INVALID_ANCESTRY"
+        super().__init__(self.message, self.error_name)
+
+class ErrorInvalidGenesis(FaultyNodeException):
+    def __init__(self, message) -> None:
+        self.message = message
+        self.error_name = "INVALID_GENESIS"
+        super().__init__(self.message, self.error_name)
+
+class ErrorUnknownObject(NonfaultyNodeException):
+    def __init__(self, message) -> None:
+        self.message = message
+        self.error_name = "UNKNOWN_OBJECT"
+        super().__init__(self.message, self.error_name)
+
+class MissingObjects(NonfaultyNodeException):
+    def __init__(self) -> None:
+        self.error_name = "MISSING_OBJECT"
