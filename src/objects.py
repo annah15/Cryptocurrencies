@@ -142,7 +142,7 @@ def validate_block(block_dict):
     #Validate the object identifier to the prev block (it can be 0 or a valid object id)
     if block_dict["previd"] == None :
         if get_objid(block_dict) != const.GENESIS_BLOCK_ID:
-            raise ErrorInvalidFormat("Block object invalid: previd is null but block i not genesis.")
+            raise ErrorInvalidGenesis("Block object invalid: previd is null but block is not genesis.")
     else :
         if not isinstance(block_dict['previd'], str): 
             raise ErrorInvalidFormat("Block object invalid: previd is not a string.")

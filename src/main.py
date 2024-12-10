@@ -93,13 +93,13 @@ def mk_ihaveobject_msg(objid):
     return {"type": "ihaveobject", "objectid": objid}
 
 def mk_chaintip_msg(blockid):
-    return {"type": "getchaintip"}
+    return {"type": "chaintip", "blockid": CHAINTIP}
 
 def mk_mempool_msg(txids):
     pass # TODO
 
 def mk_getchaintip_msg():
-    pass # TODO
+    return {"type": "getchaintip"}
 
 def mk_getmempool_msg():
     pass # TODO
@@ -126,6 +126,10 @@ async def write_msg(writer, msg_dict):
     writer.write(msg_bytes)
     writer.write(b'\n')
     await writer.drain()
+
+async def broadcast_msg(msg):
+    for queue in CONNECTIONS.values():
+        await queue.put(msg)
 
 # Check if message contains no invalid keys,
 # raises a MalformedMsgException
@@ -224,7 +228,8 @@ def validate_getpeers_msg(msg_dict):
 
 # raise an exception if not valid
 def validate_getchaintip_msg(msg_dict):
-    pass # TODO
+    if len(msg_dict) != 1:
+        raise ErrorInvalidFormat("Message malformed: Invalid getchaintip message")
 
 # raise an exception if not valid
 def validate_getmempool_msg(msg_dict):
@@ -280,7 +285,18 @@ def validate_object_msg(msg_dict):
 
 # raise an exception if not valid
 def validate_chaintip_msg(msg_dict):
-    pass # todo
+    if len(msg_dict) != 2:
+        raise ErrorInvalidFormat("More than two keys set")
+    if not "blockid" in msg_dict:
+        raise ErrorInvalidFormat("blockid not set")
+    if not isinstance(msg_dict["blockid"], str):
+        raise ErrorInvalidFormat("blockid not a string")
+    if not objects.validate_objectid(msg_dict["blockid"]):
+        raise ErrorInvalidFormat(f"Invalid format of blockid")
+
+    if int(msg_dict["blockid"], 16) >= int(const.BLOCK_TARGET, 16):
+        raise ErrorInvalidBlockPow(f"Proposed chaintip {msg_dict['blockid']} does not satisfy proof-of-work!")
+
     
 # raise an exception if not valid
 def validate_mempool_msg(msg_dict):
@@ -378,43 +394,48 @@ def get_block_txs(txids) -> dict:
     return block_txs
 
 
-# Stores a block its with its utxoset and height
-def store_block_utxo_height(block, utxo, height: int):
-    pass # TODO
-
 #Notify every pending object, that a new valid/invalif object has arrived
-def notify_pending(txid, valid):
-    print("Notify Pending")
-    for block_id, block in PENDING.copy().items():
+def notify_pending(id, valid):
+    print("Notify Pending", id)
+    for obj_id, obj in PENDING.copy().items():
         #actions have to be taken, only if object is actually referenced
-        if txid in block['missing_objs']:
+        if id in obj['missing_objs']:
             # if received object is invalid, inform the pending object and remove it from pending (its invalid as well)
             if not valid:
-                block['queue'].put_nowait({
-                                'type' : 'invalidTransaction', #special message to tell the thread to abort validation
+                print("invalid")
+                obj['queue'].put_nowait({
+                                'type' : 'invalidObject', #special message to tell the thread to abort validation
                             })
-                del PENDING[block_id]
-                continue
-            block['missing_objs'].remove(txid)
-            # if no more missing transaction, the block verification can resume, delete block from pending
-            if len(block['missing_objs']) == 0:
-                block['queue'].put_nowait({
-                                'type' : 'resumeValidation', #special message to tell the thread to resume validation
-                                'object' : block['object']
-                            })
-                del PENDING[block_id]
+                del PENDING[obj_id]
+            else:
+                print("valid")
+                obj['missing_objs'].remove(id)
+                # if no more missing transaction, the block verification can resume, delete block from pending
+                if len(obj['missing_objs']) == 0:
+                    obj['queue'].put_nowait({
+                                    'type' : 'resumeValidation', #special message to tell the thread to resume validation
+                                    'object' : obj['object']
+                                })
+                    del PENDING[obj_id]
 
 async def timeout_pending():
     # suspend for a time limit in seconds
-    await asyncio.sleep(10)
+    await asyncio.sleep(5)
     # execute the other coroutine
-    print('Timeout triggered')
     for obj_id in PENDING.copy().keys():
         if PENDING[obj_id]['timeout'] < time.time():
             PENDING[obj_id]['queue'].put_nowait({
                                     'type' : 'pendingTimeout', #special message to tell the thread to abort validation
                                 })
             del PENDING[obj_id]
+            # Remove all depending objects from pending and abort validation
+            for id , obj in PENDING.copy().items():
+            #actions have to be taken, only if object is actually referenced
+                if obj_id in obj['missing_objs']:
+                    obj['queue'].put_nowait({
+                                    'type' : 'unfindableAncestor', #special message to tell the thread to abort validation
+                                    })
+                    del PENDING[id]
         
 
 # runs a task to verify a block
@@ -437,7 +458,9 @@ async def verify_block_task(block_id, block_dict, queue):
         for q in CONNECTIONS.values():
             for missing_obj in missing_objs:
                 print("Get object message")
-                await q.put(mk_getobject_msg(missing_obj))
+                # only request object if it is not already arrived but pending
+                if missing_obj not in PENDING:
+                    await q.put(mk_getobject_msg(missing_obj))
 
         PENDING[block_id]= {
             'object' : block_dict,
@@ -460,28 +483,29 @@ async def verify_block_task(block_id, block_dict, queue):
 
 async def verify_tx_task(tx_id, tx_dict, queue):
     print("Verifying Transaction task")
-    #get transactions referenced in the block
+    #get transactions referenced in the transaction
     prev_txs = gather_previous_txs(tx_dict)
-    missing_txs = set(tx_dict['inputs']['ountpoint']['txids']) - set(prev_txs.keys())
 
-    print("Missing transactions: {}".format(missing_txs))
+    # If transaction is not coinbase or has an input
+    if 'inputs' in tx_dict:
+        missing_txs = set([inp['outpoint']['txid'] for inp in tx_dict['inputs']]) - set(prev_txs.keys())
 
-    # if there are referenced objects not found in the database
-    if len(missing_txs) > 0:
-        for q in CONNECTIONS.values():
+        print("Missing transactions: {}".format(missing_txs))
+
+        # if there are referenced objects not found in the database
+        if len(missing_txs) > 0:
             for missing_tx in missing_txs:
-                print("Get object message")
-                await q.put(mk_getobject_msg(missing_tx))
+                    await broadcast_msg(mk_getobject_msg(missing_tx))
 
-        PENDING[tx_id]= {
-            'object' : tx_dict,
-            'queue' : queue,
-            'missing_objs' : missing_txs,
-            'timeout' : time.time() + 10
-        }
-        asyncio.create_task(timeout_pending())
-        
-        raise MissingObjects
+            PENDING[tx_id]= {
+                'object' : tx_dict,
+                'queue' : queue,
+                'missing_objs' : missing_txs,
+                'timeout' : time.time() + 5
+            }
+            asyncio.create_task(timeout_pending())
+            
+            raise MissingObjects
  
     objects.verify_transaction(tx_dict, prev_txs)
 
@@ -503,6 +527,8 @@ async def handle_object_msg(msg_dict, peer_self, writer):
     
     #Verify Object
     try:
+        ip, port = peer_self
+        peer_self = Peer(ip, port)
         obj_type = obj_dict['type']
         if(obj_type == "transaction"):
             await verify_tx_task(obj_id, obj_dict, CONNECTIONS[peer_self])
@@ -510,8 +536,6 @@ async def handle_object_msg(msg_dict, peer_self, writer):
             print('Storing transaction with id {} in db'.format(obj_id))
             object_db.store_object(obj_id, obj_dict)
         elif(obj_type == "block"):
-            ip, port = peer_self
-            peer_self = Peer(ip, port)
             utxo_set, height = await verify_block_task(obj_id, obj_dict, CONNECTIONS[peer_self])
             # store block in db
             print('Storing block with id {} in db'.format(obj_id))
@@ -527,8 +551,7 @@ async def handle_object_msg(msg_dict, peer_self, writer):
     notify_pending(obj_id, True)
 
     # gossip the object to all connected peers
-    for queue in CONNECTIONS.values():
-        await queue.put(mk_ihaveobject_msg(obj_id))
+    await broadcast_msg(mk_ihaveobject_msg(obj_id))
     
 
 # returns the chaintip blockid
@@ -537,7 +560,7 @@ def get_chaintip_blockid():
 
 
 async def handle_getchaintip_msg(msg_dict, writer):
-    pass # TODO
+    await write_msg(writer, mk_chaintip_msg(CHAINTIP))
 
 
 async def handle_getmempool_msg(msg_dict, writer):
@@ -545,7 +568,14 @@ async def handle_getmempool_msg(msg_dict, writer):
 
 
 async def handle_chaintip_msg(msg_dict):
-    pass # TODO
+    objectid = msg_dict['blockid']
+
+    obj = object_db.fetch_object_data(objectid)
+    if obj == None:
+        await broadcast_msg(mk_getobject_msg(objectid))
+    else:
+        if obj['type'] != 'block':
+            raise ErrorInvalidFormat(f"Proposed chaintip {objectid} is not a block")
 
 
 async def handle_mempool_msg(msg_dict):
@@ -553,10 +583,12 @@ async def handle_mempool_msg(msg_dict):
 
 # Helper function
 async def handle_queue_msg(msg_dict, writer, peer_self):
-    if msg_dict["type"] == "invalidTransaction":
+    if msg_dict["type"] == "invalidObject":
         raise ErrorInvalidAncestry("Block references an invalid Transaction.")
     elif msg_dict["type"] == "pendingTimeout":
-        raise ErrorUnknownObject('Referenced Object not found in database.')
+        raise ErrorUnknownObject('Object not found in database.')
+    elif msg_dict["type"] == "unfindableAncestor":
+        raise ErrorUnknownObject('Object depending on not found in database.')
     elif msg_dict["type"] == "resumeValidation":
         print("Resuming Validation")
         await handle_object_msg(msg_dict, peer_self, writer)
@@ -590,6 +622,7 @@ async def handle_connection(reader, writer):
         # Send initial messages
         await write_msg(writer, mk_hello_msg())
         await write_msg(writer, mk_getpeers_msg())
+        await write_msg(writer, mk_getchaintip_msg())
         
         # Complete handshake
         firstmsg_str = await asyncio.wait_for(reader.readline(),

@@ -125,3 +125,22 @@ def fetch_block(block_id):
         print(str(e))
     finally:
         con.close()
+
+    # returns the chaintip blockid + height
+def fetch_chaintip_blockid():
+    con = sqlite3.connect(const.DB_NAME)
+    try:
+        cur = con.cursor()
+
+        res = cur.execute("SELECT id, height FROM blocks ORDER BY height DESC LIMIT 1")
+        row = res.fetchone()
+        if row is None:
+            raise Exception("Assertion error: Not even the genesis block in database")
+
+        return (row[0], row[1])
+    except Exception as e:
+        # assert: false
+        con.rollback()
+        raise e
+    finally:
+        con.close()
